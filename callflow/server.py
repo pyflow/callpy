@@ -65,8 +65,7 @@ class Server:
         self.install_signal_handlers()
 
         message = "Started server process [%d]"
-        color_message = "Started server process [" + click.style("%d", fg="cyan") + "]"
-        logger.info(message, process_id, extra={"color_message": color_message})
+        logger.info(message, process_id)
 
         await self.startup(sockets=sockets)
         if self.should_exit:
@@ -74,20 +73,12 @@ class Server:
         await self.main_loop()
         await self.shutdown(sockets=sockets)
 
-        message = "Finished server process [%d]"
-        color_message = "Finished server process [" + click.style("%d", fg="cyan") + "]"
         logger.info(
             "Finished server process [%d]",
-            process_id,
-            extra={"color_message": color_message},
+            process_id
         )
 
     async def startup(self, sockets=None):
-        await self.lifespan.startup()
-        if self.lifespan.should_exit:
-            self.should_exit = True
-            return
-
         config = self.config
 
         create_protocol = functools.partial(
@@ -98,37 +89,12 @@ class Server:
 
         if sockets is not None:
             # Explicitly passed a list of open sockets.
-            # We use this when the server is run from a Gunicorn worker.
             self.servers = []
             for sock in sockets:
                 server = await loop.create_server(
                     create_protocol, sock=sock, ssl=config.ssl, backlog=config.backlog
                 )
                 self.servers.append(server)
-
-        elif config.fd is not None:
-            # Use an existing socket, from a file descriptor.
-            sock = socket.fromfd(config.fd, socket.AF_UNIX, socket.SOCK_STREAM)
-            server = await loop.create_server(
-                create_protocol, sock=sock, ssl=config.ssl, backlog=config.backlog
-            )
-            message = "Callflow running on socket %s (Press CTRL+C to quit)"
-            logger.info(message % str(sock.getsockname()))
-            self.servers = [server]
-
-        elif config.uds is not None:
-            # Create a socket using UNIX domain socket.
-            uds_perms = 0o666
-            if os.path.exists(config.uds):
-                uds_perms = os.stat(config.uds).st_mode
-            server = await loop.create_unix_server(
-                create_protocol, path=config.uds, ssl=config.ssl, backlog=config.backlog
-            )
-            os.chmod(config.uds, uds_perms)
-            message = "Callflow running on unix socket %s (Press CTRL+C to quit)"
-            logger.info(message % config.uds)
-            self.servers = [server]
-
         else:
             # Standard case. Create a socket from a host/port pair.
             try:
@@ -138,6 +104,7 @@ class Server:
                     port=config.port,
                     ssl=config.ssl,
                     backlog=config.backlog,
+                    reuse_port=True
                 )
             except OSError as exc:
                 logger.error(exc)
