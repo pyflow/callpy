@@ -1,0 +1,15 @@
+
+httptools
+uvloop>=0.14.0
+websockets==8.*
+
+# Testing
+codecov
+isort
+pytest
+pytest-cov
+requests
+
+# Documentation
+mkdocs
+mkdocs-material
