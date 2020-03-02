@@ -14,6 +14,7 @@ from callflow.protocols import (
 )
 
 from basepy.asynclog import logger
+from .websockets import WebSocketProtocol
 
 def _get_status_line(status_code):
     try:
@@ -79,21 +80,20 @@ async def service_unavailable(scope, receive, send):
 
 
 class HttpToolsProtocol(asyncio.Protocol):
-    def __init__(self, config, server_state, _loop=None):
-        if not config.loaded:
-            config.load()
+    WS_PROTOCOL_CLASS = WebSocketProtocol
 
-        self.config = config
-        self.app = config.loaded_app
+    def __init__(self, app, root_path, server_state, _loop=None, **kwargs):
+
+        self.app = app
         self.loop = _loop or asyncio.get_event_loop()
         self.parser = httptools.HttpRequestParser(self)
-        self.ws_protocol_class = config.ws_protocol_class
-        self.root_path = config.root_path
-        self.limit_concurrency = config.limit_concurrency
+        self.ws_protocol_class = self.WS_PROTOCOL_CLASS
+        self.root_path = root_path
+        self.limit_concurrency = kwargs.get('limit_concurrency', None)
 
         # Timeouts
         self.timeout_keep_alive_task = None
-        self.timeout_keep_alive = config.timeout_keep_alive
+        self.timeout_keep_alive = kwargs.get('timeout_keep_alive', 5)
 
         # Global state
         self.server_state = server_state
@@ -193,7 +193,9 @@ class HttpToolsProtocol(asyncio.Protocol):
             output += [name, b": ", value, b"\r\n"]
         output.append(b"\r\n")
         protocol = self.ws_protocol_class(
-            config=self.config, server_state=self.server_state
+            app=self.app, root_path=self.root_path,
+            server_state=self.server_state,
+            _loop = self.loop
         )
         protocol.connection_made(self.transport)
         protocol.data_received(b"".join(output))

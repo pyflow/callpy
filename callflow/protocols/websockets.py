@@ -22,14 +22,10 @@ class Server:
 
 
 class WebSocketProtocol(websockets.WebSocketServerProtocol):
-    def __init__(self, config, server_state, _loop=None):
-        if not config.loaded:
-            config.load()
-
-        self.config = config
-        self.app = config.loaded_app
+    def __init__(self, app, root_path, server_state, _loop=None):
+        self.app = app
         self.loop = _loop or asyncio.get_event_loop()
-        self.root_path = config.root_path
+        self.root_path = root_path
 
         # Shared server state
         self.connections = server_state.connections

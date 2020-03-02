@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import logging
 import os
 import platform
 import signal
@@ -10,20 +9,105 @@ import sys
 import time
 import typing
 from email.utils import formatdate
+from callflow.protocols.http import HttpToolsProtocol
 from basepy.asynclog import logger
 
+logger.add('stdout')
 
-from .config import (
-    SSL_PROTOCOL_VERSION,
-    Config
-)
 
 HANDLED_SIGNALS = (
     signal.SIGINT,  # Unix signal 2. Sent by Ctrl+C.
     signal.SIGTERM,  # Unix signal 15. Sent by `kill <pid>`.
 )
 
+# Fallback to 'ssl.PROTOCOL_SSLv23' in order to support Python < 3.5.3.
+SSL_PROTOCOL_VERSION = getattr(ssl, "PROTOCOL_TLS", ssl.PROTOCOL_SSLv23)
 
+
+class ServerConfig:
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=8000,
+        debug=False,
+        workers=None,
+        root_path="",
+        limit_concurrency=None,
+        limit_max_requests=None,
+        backlog=2048,
+        timeout_keep_alive=5,
+        timeout_notify=30,
+        callback_notify=None,
+        ssl_keyfile=None,
+        ssl_certfile=None,
+        ssl_version=SSL_PROTOCOL_VERSION,
+        ssl_cert_reqs=ssl.CERT_NONE,
+        ssl_ca_certs=None,
+        ssl_ciphers="TLSv1",
+        headers=None,
+    ):
+        self.host = host
+        self.port = port
+        self.debug = debug
+        self.workers = workers or 1
+        self.root_path = root_path
+        self.limit_concurrency = limit_concurrency
+        self.limit_max_requests = limit_max_requests
+        self.backlog = backlog
+        self.timeout_keep_alive = timeout_keep_alive
+        self.timeout_notify = timeout_notify
+        self.callback_notify = callback_notify
+        self.ssl_keyfile = ssl_keyfile
+        self.ssl_certfile = ssl_certfile
+        self.ssl_version = ssl_version
+        self.ssl_cert_reqs = ssl_cert_reqs
+        self.ssl_ca_certs = ssl_ca_certs
+        self.ssl_ciphers = ssl_ciphers
+        self.ssl_context = None
+        self.headers = headers if headers else []  # type: List[str]
+        self.encoded_headers = None  # type: List[Tuple[bytes, bytes]]
+
+        self.loaded = False
+
+
+    @property
+    def is_ssl(self) -> bool:
+        return bool(self.ssl_keyfile or self.ssl_certfile)
+
+    def load(self):
+        assert not self.loaded
+
+        if self.is_ssl:
+            self.ssl_context = self._create_ssl_context(
+                keyfile=self.ssl_keyfile,
+                certfile=self.ssl_certfile,
+                ssl_version=self.ssl_version,
+                cert_reqs=self.ssl_cert_reqs,
+                ca_certs=self.ssl_ca_certs,
+                ciphers=self.ssl_ciphers,
+            )
+
+        encoded_headers = [
+            (key.lower().encode("latin1"), value.encode("latin1"))
+            for key, value in self.headers
+        ]
+        self.encoded_headers = (
+            encoded_headers
+            if b"server" in dict(encoded_headers)
+            else [(b"server", b"callflow")] + encoded_headers
+        )  # type: List[Tuple[bytes, bytes]]
+
+        self.loaded = True
+
+    def _create_ssl_context(self, certfile, keyfile, ssl_version, cert_reqs, ca_certs, ciphers):
+        ctx = ssl.SSLContext(ssl_version)
+        ctx.load_cert_chain(certfile, keyfile)
+        ctx.verify_mode = cert_reqs
+        if ca_certs:
+            ctx.load_verify_locations(ca_certs)
+        if ciphers:
+            ctx.set_ciphers(ciphers)
+        return ctx
 
 
 class ServerState:
@@ -39,8 +123,9 @@ class ServerState:
 
 
 class Server:
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, app, **kwargs):
+        self.app = app
+        self.config = ServerConfig(**kwargs)
         self.server_state = ServerState()
 
         self.started = False
@@ -60,12 +145,10 @@ class Server:
         if not config.loaded:
             config.load()
 
-        self.lifespan = config.lifespan_class(config)
-
         self.install_signal_handlers()
 
         message = "Started server process [%d]"
-        logger.info(message, process_id)
+        await logger.info(message, process_id)
 
         await self.startup(sockets=sockets)
         if self.should_exit:
@@ -73,7 +156,7 @@ class Server:
         await self.main_loop()
         await self.shutdown(sockets=sockets)
 
-        logger.info(
+        await logger.info(
             "Finished server process [%d]",
             process_id
         )
@@ -82,7 +165,10 @@ class Server:
         config = self.config
 
         create_protocol = functools.partial(
-            config.http_protocol_class, config=config, server_state=self.server_state
+            HttpToolsProtocol, app=self.app, root_path=config.root_path,
+            server_state=self.server_state,
+            limit_concurrency=config.limit_concurrency,
+            timeout_keep_alive=config.timeout_keep_alive
         )
 
         loop = asyncio.get_event_loop()
@@ -107,15 +193,14 @@ class Server:
                     reuse_port=True
                 )
             except OSError as exc:
-                logger.error(exc)
-                await self.lifespan.shutdown()
+                await logger.error(exc)
                 sys.exit(1)
             port = config.port
             if port == 0:
                 port = server.sockets[0].getsockname()[1]
             protocol_name = "https" if config.ssl else "http"
             message = "Callflow running on %s://%s:%d (Press CTRL+C to quit)"
-            logger.info(
+            await logger.info(
                 message,
                 protocol_name,
                 config.host,
@@ -157,7 +242,7 @@ class Server:
         return False
 
     async def shutdown(self, sockets=None):
-        logger.info("Shutting down")
+        await logger.info("Shutting down")
 
         # Stop accepting new connections.
         for server in self.servers:
@@ -175,20 +260,16 @@ class Server:
         # Wait for existing connections to finish sending responses.
         if self.server_state.connections and not self.force_exit:
             msg = "Waiting for connections to close. (CTRL+C to force quit)"
-            logger.info(msg)
+            await logger.info(msg)
             while self.server_state.connections and not self.force_exit:
                 await asyncio.sleep(0.1)
 
         # Wait for existing tasks to complete.
         if self.server_state.tasks and not self.force_exit:
             msg = "Waiting for background tasks to complete. (CTRL+C to force quit)"
-            logger.info(msg)
+            await logger.info(msg)
             while self.server_state.tasks and not self.force_exit:
                 await asyncio.sleep(0.1)
-
-        # Send the lifespan shutdown event, and wait for application shutdown.
-        if not self.force_exit:
-            await self.lifespan.shutdown()
 
     def install_signal_handlers(self):
         loop = asyncio.get_event_loop()
