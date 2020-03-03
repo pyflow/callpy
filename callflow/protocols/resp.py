@@ -50,7 +50,7 @@ class RespProtocol(asyncio.Protocol):
 class RespCallFlow(object):
     def __init__(self, name):
         self.name = name
-        self.serve_protocol = RespProtocol()
+        self.serve_protocol = RespProtocol
 
     def run_forever(self, addr="0.0.0.0", port=7878):
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -73,3 +73,7 @@ class RespCallFlow(object):
         loop.close()
 
         return 0
+
+if __name__ == '__main__':
+    s = RespCallFlow('s')
+    s.run_forever()

@@ -11,6 +11,7 @@ import typing
 from email.utils import formatdate
 from callflow.protocols.http import HttpToolsProtocol
 from basepy.asynclog import logger
+import uvloop
 
 logger.add('stdout')
 
@@ -29,6 +30,7 @@ class ServerConfig:
         self,
         host="127.0.0.1",
         port=8000,
+        loop="uvloop",
         debug=False,
         workers=None,
         root_path="",
@@ -48,6 +50,7 @@ class ServerConfig:
     ):
         self.host = host
         self.port = port
+        self.loop = loop
         self.debug = debug
         self.workers = workers or 1
         self.root_path = root_path
@@ -133,8 +136,20 @@ class Server:
         self.force_exit = False
         self.last_notified = 0
 
+    def _setup_event_loop(self):
+        loop_name = self.config.loop.lower()
+        if loop_name == 'uvloop':
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        elif loop_name == 'asyncio':
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        else:
+            raise ValueError('loop must be uvloop or asyncio.')
+
     def run(self, sockets=None):
-        self.config.setup_event_loop()
+        self._setup_event_loop()
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.serve(sockets=sockets))
 
@@ -178,7 +193,7 @@ class Server:
             self.servers = []
             for sock in sockets:
                 server = await loop.create_server(
-                    create_protocol, sock=sock, ssl=config.ssl, backlog=config.backlog
+                    create_protocol, sock=sock, ssl=config.ssl_context, backlog=config.backlog
                 )
                 self.servers.append(server)
         else:
@@ -188,7 +203,7 @@ class Server:
                     create_protocol,
                     host=config.host,
                     port=config.port,
-                    ssl=config.ssl,
+                    ssl=config.ssl_context,
                     backlog=config.backlog,
                     reuse_port=True
                 )
@@ -198,7 +213,7 @@ class Server:
             port = config.port
             if port == 0:
                 port = server.sockets[0].getsockname()[1]
-            protocol_name = "https" if config.ssl else "http"
+            protocol_name = "https" if config.ssl_context else "http"
             message = "Callflow running on %s://%s:%d (Press CTRL+C to quit)"
             await logger.info(
                 message,
