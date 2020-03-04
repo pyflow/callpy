@@ -6,7 +6,7 @@ import codecs
 import mimetypes
 from copy import deepcopy
 from itertools import repeat
-from collections import MutableMapping as DictMixin
+from collections.abc import MutableMapping as DictMixin
 from unicodedata import normalize
 from .utils import cached_property
 

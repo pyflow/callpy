@@ -71,7 +71,6 @@ class CallFlow(object):
         self.blueprints = {}
 
         self.router = Router()
-        self.server = Server()
 
     @property
     def name(self):
@@ -102,6 +101,7 @@ class CallFlow(object):
             port = 3000
         if debug is not None:
             self.debug = bool(debug)
+        self.server = Server(self)
         self.server.host = host
         self.server.port = port
         self.server.run_forever()
@@ -451,29 +451,9 @@ class CallFlow(object):
         for func in funcs:
             rv = func(request, exc)
 
-
-    def wsgi_app(self, environ, start_response):
-        """The actual WSGI application.  This is not implemented in
-        `__call__` so that middlewares can be applied without losing a
-        reference to the class.  So instead of doing this:
-
-            app = MyMiddleware(app)
-
-        It's a better idea to do this instead:
-
-            app.wsgi_app = MyMiddleware(app.wsgi_app)
-
-        Then you still have the original application object around and
-        can continue to call methods on it.
-
-        Args:
-
-          * environ: a WSGI environment
-          * start_response: a callable accepting a status code,
-                               a list of headers and an optional
-                               exception to start the response
-        """
-        req = Request(environ)
+    async def __call__(self, scope, receive, send):
+        scope['app'] = self
+        req = Request(scope, receive)
         error = None
         try:
             try:
@@ -485,10 +465,6 @@ class CallFlow(object):
             return response(environ, start_response)
         finally:
             self.do_teardown_request(req, error)
-
-    def __call__(self, environ, start_response):
-        """Shortcut for `wsgi_app`."""
-        return self.wsgi_app(environ, start_response)
 
     def __repr__(self):
         return '<%s %r>' % (

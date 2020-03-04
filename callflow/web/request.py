@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import sys
 from functools import update_wrapper
 from datetime import datetime, timedelta
 import cgi
@@ -47,11 +48,63 @@ class Request(object):
     #: happened when matching, this will be `None`.
     view_args = None
 
-    def __init__(self, environ, populate_request=True):
-        self.environ = environ
+    def __init__(self, scope, receive, populate_request=True):
+        self.scope = scope
+        self.recieve = receive
+        self.environ = self._build_environ(scope)
+        self.environ['callflow.app'] = scope['app']
         self.g = RequestContextGlobals()
         if populate_request:
-            self.environ['.request'] = self
+            self.environ['callflow.request'] = self
+
+
+    def _build_environ(self, scope):
+        """
+        Builds a scope and request message into a WSGI environ object.
+        """
+        environ = {
+            "REQUEST_METHOD": scope["method"],
+            "SCRIPT_NAME": "",
+            "PATH_INFO": scope["path"],
+            "QUERY_STRING": scope["query_string"].decode("ascii"),
+            "SERVER_PROTOCOL": "HTTP/%s" % scope["http_version"],
+            "wsgi.version": (1, 0),
+            "wsgi.url_scheme": scope.get("scheme", "http"),
+            "wsgi.input": None, #io.BytesIO(body),
+            "wsgi.errors": sys.stdout,
+            "wsgi.multithread": True,
+            "wsgi.multiprocess": True,
+            "wsgi.run_once": False,
+        }
+
+        # Get server name and port - required in WSGI, not in ASGI
+        server = scope.get("server")
+        if server is None:
+            server = ("localhost", 80)
+        environ["SERVER_NAME"] = server[0]
+        environ["SERVER_PORT"] = server[1]
+
+        # Get client IP address
+        client = scope.get("client")
+        if client is not None:
+            environ["REMOTE_ADDR"] = client[0]
+
+        # Go through headers and make them into environ entries
+        for name, value in scope.get("headers", []):
+            name = name.decode("latin1")
+            if name == "content-length":
+                corrected_name = "CONTENT_LENGTH"
+            elif name == "content-type":
+                corrected_name = "CONTENT_TYPE"
+            else:
+                corrected_name = "HTTP_%s" % name.upper().replace("-", "_")
+            # HTTPbis say only ASCII chars are allowed in headers, but we latin1 just in case
+            value = value.decode("latin1")
+            if corrected_name in environ:
+                value = environ[corrected_name] + "," + value
+            environ[corrected_name] = value
+        return environ
+
 
     def __repr__(self):
         # make sure the __repr__ even works if the request was created
