@@ -6,6 +6,7 @@ from datetime import timedelta
 import traceback
 from itertools import chain
 from functools import update_wrapper
+import asyncio
 
 from .web.routing import Router
 from .web.exceptions import HTTPException, InternalServerError, MethodNotAllowed, BadRequest, RequestRedirect
@@ -14,6 +15,7 @@ from .web.request import Request
 from .web.response import Response, make_response
 from .web.utils import reraise, to_bytes, to_unicode
 from .server import Server
+from basepy.asynclog import logger
 
 
 class CallFlow(object):
@@ -30,10 +32,10 @@ class CallFlow(object):
     """
 
 
-    def __init__(self, import_name=''):
+    def __init__(self, name=''):
         self.config = {}
 
-        self.import_name = import_name
+        self.name = name or 'main'
 
         #: A dictionary of all view functions registered.  The keys will
         #: be function names which are also used to generate URLs and
@@ -72,17 +74,6 @@ class CallFlow(object):
 
         self.router = Router()
 
-    @property
-    def name(self):
-        """The name of the application.  This is usually the import name
-        with the difference that it's guessed from the run file if the
-        import name is main.
-        """
-        if self.import_name == '__main__':
-            fn = getattr(sys.modules['__main__'], '__file__', None)
-            return os.path.splitext(os.path.basename(fn))[0] if fn else '__main__'
-        return self.import_name
-
 
     def run(self, host=None, port=None, debug=True, **options):
         """Runs the application on a local development server.
@@ -104,7 +95,8 @@ class CallFlow(object):
         self.server = Server(self)
         self.server.host = host
         self.server.port = port
-        self.server.run_forever()
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self.server.serve())
 
     def register_blueprint(self, blueprint, **options):
         """Registers a blueprint on the application.
@@ -305,7 +297,7 @@ class CallFlow(object):
         return f
 
 
-    def handle_http_exception(self, e):
+    async def handle_http_exception(self, e):
         """Handles an HTTP exception.  By default this will invoke the
         registered error handlers and fall back to returning the
         exception as response.
@@ -321,11 +313,11 @@ class CallFlow(object):
             handler = self.error_handler_spec[None].get(e.code)
         if handler is None:
             return e
-        return handler(e)
+        return await handler(e)
 
-    def handle_user_exception(self, e):
+    async def handle_user_exception(self, e):
         """This method is called whenever an exception occurs that should be
-        handled.  A special case are `~.web.exception.HTTPException`\s which are forwarded by
+        handled.  A special case are `~.web.exception.HTTPException` which are forwarded by
         this function to the `handle_http_exception` method.  This
         function will either return a response value or reraise the
         exception with the same traceback.
@@ -339,7 +331,7 @@ class CallFlow(object):
         # we cannot prevent users from trashing it themselves in a custom
         # trap_http_exception method so that's their fault then.
         if isinstance(e, HTTPException):
-            return self.handle_http_exception(e)
+            return await self.handle_http_exception(e)
 
         blueprint_handlers = ()
         handlers = self.error_handler_spec.get(request.blueprint)
@@ -348,11 +340,11 @@ class CallFlow(object):
         app_handlers = self.error_handler_spec[None].get(None, ())
         for typecheck, handler in chain(blueprint_handlers, app_handlers):
             if isinstance(e, typecheck):
-                return handler(e)
+                return await handler(e)
 
         reraise(exc_type, exc_value, tb)
 
-    def handle_exception(self, e):
+    async def handle_exception(self, e):
         """Default exception handling that kicks in when an exception
         occurs that is not caught.  In debug mode the exception will
         be re-raised immediately, otherwise it is logged and the handler
@@ -363,23 +355,23 @@ class CallFlow(object):
 
         handler = self.error_handler_spec[None].get(500)
 
-        self.log_exception((exc_type, exc_value, tb))
+        await self.log_exception((exc_type, exc_value, tb))
         if handler is None:
             return InternalServerError()
-        return handler(e)
+        return await handler(e)
 
-    def log_exception(self, exc_info):
+    async def log_exception(self, exc_info):
         """Logs an exception.  This is called by `handle_exception`
         if debugging is disabled and right before the handler is called.
         The default implementation logs the exception as error on the
         `logger`.
         """
-        logger.error('Exception on %s [%s]' % (
+        await logger.error('Exception on %s [%s]' % (
             request.path,
             request.method
         ), exc_info=exc_info)
 
-    def full_dispatch_request(self, request):
+    async def full_dispatch_request(self, request):
         """Dispatches the request and on top of that performs request
         pre and postprocessing as well as HTTP exception catching and
         error handling.
@@ -388,17 +380,17 @@ class CallFlow(object):
             req = request
             endpoint, view_args = self.router.match(to_unicode(req.environ['PATH_INFO']))
             req.endpoint, req.view_args = endpoint, view_args
-            rv = self.preprocess_request(req)
+            rv = await self.preprocess_request(req)
             if rv is None:
-                rv = self.view_functions[req.endpoint](**req.view_args)
+                rv = await self.view_functions[req.endpoint](req, **req.view_args)
         except Exception as e:
-            logger.info('%s'%(traceback.format_exc()))
-            rv = self.handle_user_exception(e)
+            await logger.info('%s'%(traceback.format_exc()))
+            rv = await self.handle_user_exception(e)
         response = make_response(rv)
-        response = self.process_response(req, response)
+        response = await self.process_response(req, response)
         return response
 
-    def preprocess_request(self, request):
+    async def preprocess_request(self, request):
         """Called before the actual request dispatching and will
         call every as `before_request` decorated function.
         If any of these function returns a value it's handled as
@@ -410,11 +402,11 @@ class CallFlow(object):
         if bp is not None and bp in self.before_request_funcs:
             funcs = chain(funcs, self.before_request_funcs[bp])
         for func in funcs:
-            rv = func(request)
+            rv = await func(request)
             if rv is not None:
                 return rv
 
-    def process_response(self, request, response):
+    async def process_response(self, request, response):
         """Can be overridden in order to modify the response object
         before it's sent to the WSGI server.  By default this will
         call all the `after_request` decorated functions.
@@ -435,10 +427,10 @@ class CallFlow(object):
         if None in self.after_request_funcs:
             funcs = chain(funcs, self.after_request_funcs[None])
         for handler in funcs:
-            response = handler(request, response)
+            response = await handler(request, response)
         return response
 
-    def do_teardown_request(self, request, exc=None):
+    async def do_teardown_request(self, request, exc=None):
         """Called after the actual request dispatching and will
         call every as `teardown_request` decorated function.
         """
@@ -449,7 +441,7 @@ class CallFlow(object):
         if bp is not None and bp in self.teardown_request_funcs:
             funcs = chain(funcs, self.teardown_request_funcs[bp])
         for func in funcs:
-            rv = func(request, exc)
+            rv = await func(request, exc)
 
     async def __call__(self, scope, receive, send):
         scope['app'] = self
@@ -457,14 +449,14 @@ class CallFlow(object):
         error = None
         try:
             try:
-                response = self.full_dispatch_request(req)
+                response = await self.full_dispatch_request(req)
             except Exception as e:
-                logger.info('%s'%(traceback.format_exc()))
+                await logger.info('%s'%(traceback.format_exc()))
                 error = e
-                response = make_response(self.handle_exception(e))
-            return response(environ, start_response)
+                response = make_response(await self.handle_exception(e))
+            return await response(send)
         finally:
-            self.do_teardown_request(req, error)
+            await self.do_teardown_request(req, error)
 
     def __repr__(self):
         return '<%s %r>' % (

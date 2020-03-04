@@ -9,7 +9,6 @@ from .datastructures import HeaderProperty, HeaderDict
 from .exceptions import HTTPException, RequestRedirect
 from http.cookies import SimpleCookie
 
-
 def make_response(*args):
     rv, status_or_headers, headers = args + (None,) * (3 - len(args))
 
@@ -19,7 +18,7 @@ def make_response(*args):
     if isinstance(status_or_headers, (dict, list)):
         headers, status_or_headers = status_or_headers, None
 
-    if isinstance(rv, (text_type, bytes, bytearray)):
+    if isinstance(rv, (str, bytes, bytearray)):
         rv = Response(rv, headers=headers,
                                  status=status_or_headers)
     elif isinstance(rv, HTTPException):
@@ -212,12 +211,11 @@ class Response(object):
     @property
     def headerlist(self):
         """ WSGI conform list of (header, value) tuples. """
-        import hyperapp
         out = []
         headers = list(self._headers.allitems())
         if 'Content-Type' not in self._headers:
             headers.append(('Content-Type', self.default_content_type))
-        headers.append(('Server', 'CallFlow %s'%(hyperapp.__version__)))
+        #headers.append(('Server', 'CallFlow %s'%(server_version)))
         if self._status_code in self.bad_headers:
             bad_headers = self.bad_headers[self._status_code]
             headers = [h for h in headers if h[0] not in bad_headers]
@@ -311,10 +309,11 @@ class Response(object):
             out += '%s: %s\n' % (name.title(), value.strip())
         return out
 
-    def __call__(self, environ, start_response):
-        """Process this response as WSGI application.
-        """
-        start_response(self._status_line, self.headerlist)
-        body = self.body if isinstance(self.body, list) else [self.body]
-        body = list(map(lambda x: to_bytes(x), body))
+    async def __call__(self, send):
+        await send({"type": "http.response.start", "status": self.status_code, "headers": []})
+        if isinstance(self.body, list):
+            body = b"".join(list(map(lambda x: to_bytes(x), body)))
+        else:
+            body = to_bytes(self.body)
+        await send({"type": "http.response.body", "body":body, "more_body": False})
         return body

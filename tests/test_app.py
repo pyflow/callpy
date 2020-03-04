@@ -9,17 +9,23 @@ import traceback
 
 def test_basic_app():
     app = CallFlow(__name__)
-    app.add_url_rule('/hello', 'hello', lambda x: 'ok')
+    async def hello(req):
+        return 'ok'
+
+    app.add_url_rule('/hello', 'hello', hello)
+
+    async def hello2(req):
+        return 'ok'
 
     with pytest.raises(AssertionError):
-        app.add_url_rule('/hello', 'hello', lambda x: 'ok')
+        app.add_url_rule('/hello', 'hello', hello2)
 
     @app.endpoint('foo')
-    def foo():
+    async def foo(req):
         return 'foo'
     app.add_url_rule('/foo', 'foo')
 
-    def error_handler(exception):
+    async def error_handler(exception):
         return '500'
 
     app.register_error_handler(Exception, error_handler)
