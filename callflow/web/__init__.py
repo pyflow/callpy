@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from .exceptions import abort
 from .request import Request
-from .response import Response, make_response, redirect, jsonify
+from .response import Response, make_response, redirect, jsonify, abort
 from .blueprints import Blueprint

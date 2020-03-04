@@ -92,9 +92,7 @@ class CallFlow(object):
             port = 3000
         if debug is not None:
             self.debug = bool(debug)
-        self.server = Server(self)
-        self.server.host = host
-        self.server.port = port
+        self.server = Server(self, host=host, port=port)
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.server.serve())
 

@@ -6,7 +6,7 @@ import time
 from .http import HTTP_STATUS_CODES, http_date, html_escape, parse_date
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
-from .exceptions import HTTPException, RequestRedirect
+from .exceptions import HTTPException, RequestRedirect, default_exceptions
 from http.cookies import SimpleCookie
 
 def make_response(*args):
@@ -29,7 +29,7 @@ def make_response(*args):
             raise ValueError('View function returns must be Response or text, not %s'%(rv))
 
         if status_or_headers is not None:
-            if isinstance(status_or_headers, string_types):
+            if isinstance(status_or_headers, str):
                 rv.status = status_or_headers
             else:
                 rv._status_code = status_or_headers
@@ -67,6 +67,14 @@ def jsonify(*args, **kwargs):
     rv = Response(json.dumps(dict(*args, **kwargs), indent=indent, separators=separators),
         content_type='application/json')
     return rv
+
+def abort(code, *args, **kwargs):
+    mapping = default_exceptions
+    if not args and not kwargs and not isinstance(code, int):
+        raise HTTPException(description=code)
+    if code not in mapping:
+        raise LookupError('no exception for %r' % code)
+    raise mapping[code](*args, **kwargs)
 
 class Response(object):
     """ Storage class for a response body as well as headers and cookies.
@@ -276,7 +284,7 @@ class Response(object):
         if secret:
             pass
             #value = to_unicode(cookie_encode((name, value), secret))
-        elif not isinstance(value, string_types):
+        elif not isinstance(value, str):
             raise TypeError('Secret key missing for non-string Cookie.')
 
         if len(value) > 4096: raise ValueError('Cookie value to long.')
@@ -310,7 +318,8 @@ class Response(object):
         return out
 
     async def __call__(self, send):
-        await send({"type": "http.response.start", "status": self.status_code, "headers": []})
+        headers = list(map(lambda x: [to_bytes(x[0]), to_bytes(x[1])], self.headerlist))
+        await send({"type": "http.response.start", "status": self.status_code, "headers": headers})
         if isinstance(self.body, list):
             body = b"".join(list(map(lambda x: to_bytes(x), body)))
         else:

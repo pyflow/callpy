@@ -455,7 +455,7 @@ class HTTPVersionNotSupported(HTTPException):
 
 
 default_exceptions = {}
-__all__ = ['HTTPException']
+__all__ = ['HTTPException', 'default_exceptions']
 
 def _find_exceptions():
     for name, obj in globals().items():
@@ -472,12 +472,3 @@ def _find_exceptions():
         default_exceptions[obj.code] = obj
 _find_exceptions()
 del _find_exceptions
-
-
-def abort(code, *args, **kwargs):
-    mapping = default_exceptions
-    if not args and not kwargs and not isinstance(code, (int, long)):
-        raise HTTPException(response=code)
-    if code not in mapping:
-        raise LookupError('no exception for %r' % code)
-    raise mapping[code](*args, **kwargs)
