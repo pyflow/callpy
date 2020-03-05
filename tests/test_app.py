@@ -2,7 +2,6 @@
 import pytest
 
 from callflow.app import CallFlow
-from callflow.web.request import RequestContextGlobals
 import copy
 import traceback
 
@@ -25,8 +24,8 @@ def test_basic_app():
         return 'foo'
     app.add_url_rule('/foo', 'foo')
 
-    async def error_handler(exception):
+    async def error_handler(error):
         return '500'
 
-    app.register_error_handler(Exception, error_handler)
+    app.register_error_handler(500, error_handler)
 

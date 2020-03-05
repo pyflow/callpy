@@ -1,6 +1,6 @@
 
 import re
-from .exceptions import BadRequest, NotFound, MethodNotAllowed
+from .errors import BadRequest, NotFound, MethodNotAllowed
 
 class RouteSyntaxError(Exception):
     pass
@@ -86,7 +86,7 @@ class Router(object):
             re_match = re_pattern.match
         except re.error as _e:
             raise RouteSyntaxError("Could not add Route: %s (%s)" %
-                                   (rule, _e()))
+                                   (rule, _e))
 
         rule_args['match'] = re_match
 
@@ -96,7 +96,7 @@ class Router(object):
 
 
     def match(self, path, method='GET'):
-        """ Return a (endpoint, url_args) tuple or raise HTTPException(400/404/405). """
+        """ Return a (endpoint, url_args) tuple or raise HTTPError(400/404/405). """
         rule_args = self.static_routes.get(path)
         url_args = {}
         if not rule_args:

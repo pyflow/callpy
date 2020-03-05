@@ -9,7 +9,7 @@ from functools import update_wrapper
 import asyncio
 
 from .web.routing import Router
-from .web.exceptions import HTTPException, InternalServerError, MethodNotAllowed, BadRequest, RequestRedirect
+from .web.errors import HTTPError, InternalServerError, MethodNotAllowed, BadRequest
 
 from .web.request import Request
 from .web.response import Response, make_response
@@ -210,19 +210,13 @@ class CallFlow(object):
             return f
         return decorator
 
-    def errorhandler(self, code_or_exception):
+    def errorhandler(self, code):
         """A decorator that is used to register a function give a given
         error code.  Example:
 
             @app.errorhandler(404)
             def page_not_found(error):
                 return 'This page does not exist', 404
-
-        You can also register handlers for arbitrary exceptions:
-
-            @app.errorhandler(DatabaseError)
-            def special_exception_handler(error):
-                return 'Database connection failed', 500
 
         You can also register a function as error handler without using
         the `errorhandler` decorator.  The following example is
@@ -241,28 +235,25 @@ class CallFlow(object):
 
         """
         def decorator(f):
-            self._register_error_handler(None, code_or_exception, f)
+            self._register_error_handler(None, code, f)
             return f
         return decorator
 
-    def register_error_handler(self, code_or_exception, f):
+    def register_error_handler(self, code, f):
         """Alternative error attach function to the `errorhandler`
         decorator that is more straightforward to use for non decorator
         usage.
         """
-        self._register_error_handler(None, code_or_exception, f)
+        self._register_error_handler(None, code, f)
 
-    def _register_error_handler(self, key, code_or_exception, f):
-        if isinstance(code_or_exception, HTTPException):
-            code_or_exception = code_or_exception.code
-        if isinstance(code_or_exception, int):
-            assert code_or_exception != 500 or key is None, \
-                'It is currently not possible to register a 500 internal ' \
-                'server error on a per-blueprint level.'
-            self.error_handler_spec.setdefault(key, {})[code_or_exception] = f
-        else:
-            self.error_handler_spec.setdefault(key, {}).setdefault(None, []) \
-                .append((code_or_exception, f))
+    def _register_error_handler(self, key, code, f):
+        if not isinstance(code, int):
+            raise ValueError("code must int, got {}".format(code))
+
+        assert code != 500 or key is None, \
+            'It is currently not possible to register a 500 internal ' \
+            'server error on a per-blueprint level.'
+        self.error_handler_spec.setdefault(key, {})[code] = f
 
     def before_request(self, f):
         """Registers a function to run before each request."""
@@ -295,7 +286,7 @@ class CallFlow(object):
         return f
 
 
-    async def handle_http_exception(self, e):
+    async def handle_http_error(self, request, e):
         """Handles an HTTP exception.  By default this will invoke the
         registered error handlers and fall back to returning the
         exception as response.
@@ -313,61 +304,36 @@ class CallFlow(object):
             return e
         return await handler(e)
 
-    async def handle_user_exception(self, e):
+    async def handle_user_exception(self, request, e):
         """This method is called whenever an exception occurs that should be
-        handled.  A special case are `~.web.exception.HTTPException` which are forwarded by
-        this function to the `handle_http_exception` method.  This
+        handled.  A special case are `~.web.error.HTTPError` which are forwarded by
+        this function to the `handle_http_error` method.  This
         function will either return a response value or reraise the
         exception with the same traceback.
-
         """
         exc_type, exc_value, tb = sys.exc_info()
         assert exc_value is e
 
-        # ensure not to trash sys.exc_info() at that point in case someone
-        # wants the traceback preserved in handle_http_exception.  Of course
-        # we cannot prevent users from trashing it themselves in a custom
-        # trap_http_exception method so that's their fault then.
-        if isinstance(e, HTTPException):
-            return await self.handle_http_exception(e)
+        if isinstance(e, HTTPError):
+            return await self.handle_http_error(request, e)
+        else:
+            error = InternalServerError(exc_info=(exc_type, exc_value, tb))
+            return await self.handle_http_error(request, error)
 
-        blueprint_handlers = ()
-        handlers = self.error_handler_spec.get(request.blueprint)
-        if handlers is not None:
-            blueprint_handlers = handlers.get(None, ())
-        app_handlers = self.error_handler_spec[None].get(None, ())
-        for typecheck, handler in chain(blueprint_handlers, app_handlers):
-            if isinstance(e, typecheck):
-                return await handler(e)
-
-        reraise(exc_type, exc_value, tb)
-
-    async def handle_exception(self, e):
+    async def handle_exception(self, request, e):
         """Default exception handling that kicks in when an exception
         occurs that is not caught.  In debug mode the exception will
         be re-raised immediately, otherwise it is logged and the handler
         for a 500 internal server error is used.  If no such handler
         exists, a default 500 internal server error message is displayed.
         """
-        exc_type, exc_value, tb = sys.exc_info()
-
-        handler = self.error_handler_spec[None].get(500)
-
-        await self.log_exception((exc_type, exc_value, tb))
-        if handler is None:
-            return InternalServerError()
-        return await handler(e)
-
-    async def log_exception(self, exc_info):
-        """Logs an exception.  This is called by `handle_exception`
-        if debugging is disabled and right before the handler is called.
-        The default implementation logs the exception as error on the
-        `logger`.
-        """
+        exc_info = sys.exc_info()
         await logger.error('Exception on %s [%s]' % (
             request.path,
             request.method
         ), exc_info=exc_info)
+
+        return InternalServerError(exc_info=exc_info)
 
     async def full_dispatch_request(self, request):
         """Dispatches the request and on top of that performs request
@@ -383,10 +349,12 @@ class CallFlow(object):
                 rv = await self.view_functions[req.endpoint](req, **req.view_args)
         except Exception as e:
             await logger.info('%s'%(traceback.format_exc()))
-            rv = await self.handle_user_exception(e)
-        response = make_response(rv)
-        response = await self.process_response(req, response)
-        return response
+            rv = await self.handle_user_exception(req, e)
+            return make_response(rv)
+        else:
+            response = make_response(rv)
+            response = await self.process_response(req, response)
+            return response
 
     async def preprocess_request(self, request):
         """Called before the actual request dispatching and will
@@ -451,7 +419,7 @@ class CallFlow(object):
             except Exception as e:
                 await logger.info('%s'%(traceback.format_exc()))
                 error = e
-                response = make_response(await self.handle_exception(e))
+                response = make_response(await self.handle_exception(req, e))
             return await response(send)
         finally:
             await self.do_teardown_request(req, error)

@@ -430,7 +430,7 @@ class RequestResponseCycle:
             status_code = message["status"]
             headers = self.default_headers + list(message.get("headers", []))
 
-            await logger.info(
+            await logger.debug(
                     '%s - "%s %s HTTP/%s" %d',
                     get_client_addr(self.scope),
                     self.scope["method"],

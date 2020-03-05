@@ -4,7 +4,7 @@ from functools import update_wrapper
 from datetime import datetime, timedelta
 import cgi
 from tempfile import TemporaryFile
-from .exceptions import HTTPException, BadRequest
+from .errors import HTTPError, BadRequest
 from .utils import cached_property
 from .datastructures import MultiDict, FileUpload, FormsDict, WSGIHeaders
 from io import StringIO, BytesIO
@@ -12,25 +12,9 @@ from http.cookies import SimpleCookie
 from .utils import (to_unicode, to_bytes, urlencode, urldecode, urlquote, urljoin, json)
 from .http import (parse_content_type, parse_date, parse_auth, parse_content_type, parse_range_header)
 
-from .exceptions import BadRequest
+from .errors import BadRequest
 
 MEMFILE_MAX = 4*1024*1024
-
-class RequestContextGlobals(object):
-    """A plain object."""
-
-    def get(self, name, default=None):
-        return self.__dict__.get(name, default)
-
-    def __contains__(self, item):
-        return item in self.__dict__
-
-    def __iter__(self):
-        return iter(self.__dict__)
-
-    def __repr__(self):
-        return '<request.g of %r>' % object.__repr__(self)
-
 
 class Request(object):
     """
@@ -53,7 +37,6 @@ class Request(object):
         self.recieve = receive
         self.environ = self._build_environ(scope)
         self.environ['callflow.app'] = scope['app']
-        self.g = RequestContextGlobals()
         if populate_request:
             self.environ['callflow.request'] = self
 

@@ -6,8 +6,27 @@ import time
 from .http import HTTP_STATUS_CODES, http_date, html_escape, parse_date
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
-from .exceptions import HTTPException, RequestRedirect, default_exceptions
+from .errors import HTTPError, default_errors
 from http.cookies import SimpleCookie
+
+class RedirectResponse:
+    code = 301
+
+    def __init__(self, new_url):
+        self.new_url = new_url
+
+    def get_headers(self):
+        return [('Location', self.new_url), ('Content-Type', 'text/html')]
+
+    def get_body(self):
+        display_location = html_escape(self.new_url)
+        body = str((
+            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">\n'
+            '<title>Redirecting...</title>\n'
+            '<h1>Redirecting...</h1>\n'
+            '<p>You should be redirected automatically to target URL: '
+            '<a href="%s">%s</a>.  If not click the link.') % (html_escape(self.new_url), display_location))
+        return body
 
 def make_response(*args):
     rv, status_or_headers, headers = args + (None,) * (3 - len(args))
@@ -21,7 +40,10 @@ def make_response(*args):
     if isinstance(rv, (str, bytes, bytearray)):
         rv = Response(rv, headers=headers,
                                  status=status_or_headers)
-    elif isinstance(rv, HTTPException):
+    elif isinstance(rv, HTTPError):
+        rv = Response(to_bytes(rv.get_body()), headers=rv.get_headers(),
+                                 status=rv.code)
+    elif isinstance(rv, RedirectResponse):
         rv = Response(to_bytes(rv.get_body()), headers=rv.get_headers(),
                                  status=rv.code)
     else:
@@ -50,7 +72,7 @@ def redirect(location, code=302):
       * location: the location the response should redirect to.
       * code: the redirect status code. defaults to 302.
     """
-    rv = RequestRedirect(location)
+    rv = RedirectResponse(location)
     rv.code = code
     return make_response(rv)
 
@@ -69,9 +91,9 @@ def jsonify(*args, **kwargs):
     return rv
 
 def abort(code, *args, **kwargs):
-    mapping = default_exceptions
+    mapping = default_errors
     if not args and not kwargs and not isinstance(code, int):
-        raise HTTPException(description=code)
+        raise HTTPError(description=code)
     if code not in mapping:
         raise LookupError('no exception for %r' % code)
     raise mapping[code](*args, **kwargs)
@@ -325,4 +347,3 @@ class Response(object):
         else:
             body = to_bytes(self.body)
         await send({"type": "http.response.body", "body":body, "more_body": False})
-        return body
