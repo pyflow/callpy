@@ -215,14 +215,14 @@ class CallFlow(object):
         error code.  Example:
 
             @app.errorhandler(404)
-            def page_not_found(error):
+            def page_not_found(request, error):
                 return 'This page does not exist', 404
 
         You can also register a function as error handler without using
         the `errorhandler` decorator.  The following example is
         equivalent to the one above:
 
-            def page_not_found(error):
+            def page_not_found(request, error):
                 return 'This page does not exist', 404
             app.error_handler_spec[None][404] = page_not_found
 
@@ -302,7 +302,7 @@ class CallFlow(object):
             handler = self.error_handler_spec[None].get(e.code)
         if handler is None:
             return e
-        return await handler(e)
+        return await handler(request, e)
 
     async def handle_user_exception(self, request, e):
         """This method is called whenever an exception occurs that should be
@@ -353,7 +353,7 @@ class CallFlow(object):
             return make_response(rv)
         else:
             response = make_response(rv)
-            response = await self.process_response(req, response)
+            response = await self.process_response(request, response)
             return response
 
     async def preprocess_request(self, request):
@@ -420,9 +420,9 @@ class CallFlow(object):
                 await logger.info('%s'%(traceback.format_exc()))
                 error = e
                 response = make_response(await self.handle_exception(req, e))
-            return await response(send)
+            await response(send)
         finally:
-            await self.do_teardown_request(req, error)
+            await self.do_teardown_request(req, response, error)
 
     def __repr__(self):
         return '<%s %r>' % (

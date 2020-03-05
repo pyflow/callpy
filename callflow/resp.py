@@ -44,7 +44,7 @@ class RespProtocol(asyncio.Protocol):
 
 
 
-class RespCallFlow(object):
+class RespServer(object):
     def __init__(self, name):
         self.name = name
         self.serve_protocol = RespProtocol
@@ -70,7 +70,3 @@ class RespCallFlow(object):
         loop.close()
 
         return 0
-
-if __name__ == '__main__':
-    s = RespCallFlow('s')
-    s.run_forever()

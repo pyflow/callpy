@@ -6,6 +6,7 @@ import time
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
 from .errors import HTTPError, default_errors
+from .request import parse_date
 from http.cookies import SimpleCookie
 
 
@@ -192,15 +193,23 @@ class Response(object):
 
     @status_code.setter
     def status_code(self, code):
+        if isinstance(code, str):
+            code = int(code.strip())
+        elif isinstance(code, int):
+            code = code
+        else:
+            raise ValueError('String status must be valid int, got {}'.format(code))
+        if not 100 <= code <= 999:
+            raise ValueError('Status code out of range.')
         self._status_code = int(code)
 
     @property
     def status(self):
-        return str(self._status_code)
+        return self.status_code
 
     @status.setter
     def status(self, status):
-        self._status_code = int(status)
+        self.status_code = status
 
     @property
     def headers(self):
