@@ -1,6 +1,4 @@
 
-from collections.abc import deque
-
 import asyncio
 import itertools
 import sys
@@ -12,7 +10,7 @@ import uvloop
 
 class RespProtocol(asyncio.Protocol):
     def __init__(self):
-        self.response = deque()
+        self.response = list()
         self.parser = hiredis.Reader()
         self.transport = None  # type: asyncio.transports.Transport
         self.commands = {

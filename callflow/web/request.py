@@ -3,6 +3,10 @@ import sys
 from functools import update_wrapper
 from datetime import datetime, timedelta
 import cgi
+import email
+import email.utils
+import base64
+import time
 from tempfile import TemporaryFile
 from .errors import HTTPError, BadRequest
 from .utils import cached_property
@@ -10,11 +14,58 @@ from .datastructures import MultiDict, FileUpload, FormsDict, WSGIHeaders
 from io import StringIO, BytesIO
 from http.cookies import SimpleCookie
 from .utils import (to_unicode, to_bytes, urlencode, urldecode, urlquote, urljoin, json)
-from .http import (parse_content_type, parse_date, parse_auth, parse_content_type, parse_range_header)
 
 from .errors import BadRequest
 
 MEMFILE_MAX = 4*1024*1024
+
+def parse_date(ims):
+    """ Parse rfc1123, rfc850 and asctime timestamps and return UTC epoch. """
+    try:
+        ts = email.utils.parsedate_tz(ims)
+        return time.mktime(ts[:8] + (0, )) - (ts[9] or 0) - time.timezone
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+def parse_auth(header):
+    """ Parse rfc2617 HTTP authentication header string (basic) and return (user,pass) tuple or None"""
+    try:
+        method, data = header.split(None, 1)
+        if method.lower() == 'basic':
+            user, pwd = base64.b64decode(data).split(':', 1)
+            return user, pwd
+    except (KeyError, ValueError, Exception):
+        return None
+
+
+def parse_range_header(header, maxlen=0):
+    """ Yield (start, end) ranges parsed from a HTTP Range header. Skip
+        unsatisfiable ranges. The end index is non-inclusive."""
+    if not header or header[:6] != 'bytes=': return
+    ranges = [r.split('-', 1) for r in header[6:].split(',') if '-' in r]
+    for start, end in ranges:
+        try:
+            if not start:  # bytes=-100    -> last 100 bytes
+                start, end = max(0, maxlen - int(end)), maxlen
+            elif not end:  # bytes=100-    -> all but the first 99 bytes
+                start, end = int(start), maxlen
+            else:  # bytes=100-200 -> bytes 100-200 (inclusive)
+                start, end = int(start), min(int(end) + 1, maxlen)
+            if 0 <= start < end <= maxlen:
+                yield start, end
+        except ValueError:
+            pass
+
+def parse_content_type(content_type):
+    parts = content_type.split(';')
+    params = {}
+    for part in parts[1:]:
+        if '=' not in part:
+            break
+        k, v = part.strip().split('=', 1)
+        params[k] = v
+    return (parts[0], params)
 
 class Request(object):
     """

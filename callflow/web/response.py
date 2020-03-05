@@ -3,11 +3,33 @@ from functools import update_wrapper
 from datetime import datetime, timedelta, date
 import time
 
-from .http import HTTP_STATUS_CODES, http_date, html_escape, parse_date
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
 from .errors import HTTPError, default_errors
 from http.cookies import SimpleCookie
+
+
+def http_date(value):
+    if isinstance(value, (date, datetime)):
+        value = value.utctimetuple()
+    elif isinstance(value, (int, float)):
+        value = time.gmtime(value)
+    if not isinstance(value, str):
+        value = time.strftime("%a, %d %b %Y %H:%M:%S GMT", value)
+    return value
+
+
+def html_escape(string):
+    """ Escape HTML special characters ``&<>`` and quotes ``'"``. """
+    return string.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')\
+                 .replace('"', '&quot;').replace("'", '&#039;')
+
+
+def html_quote(string):
+    """ Escape and quote a string to be used as an HTTP attribute."""
+    return '"%s"' % html_escape(string).replace('\n', '&#10;')\
+                    .replace('\r', '&#13;').replace('\t', '&#9;')
+
 
 class RedirectResponse:
     code = 301
@@ -51,10 +73,7 @@ def make_response(*args):
             raise ValueError('View function returns must be Response or text, not %s'%(rv))
 
         if status_or_headers is not None:
-            if isinstance(status_or_headers, str):
-                rv.status = status_or_headers
-            else:
-                rv._status_code = status_or_headers
+            rv.status = status_or_headers
 
         if headers:
             headers = headers.items() if isinstance(headers, dict) else headers
@@ -167,39 +186,21 @@ class Response(object):
             self.body.close()
 
     @property
-    def status_line(self):
-        """ The HTTP status line as a string (e.g. ``404 Not Found``)."""
-        return self._status_line
-
-    @property
     def status_code(self):
         """ The HTTP status code as an integer (e.g. 404)."""
         return self._status_code
 
-    def _set_status(self, status):
-        if isinstance(status, int):
-            code, status = status, '%s %s'%(status, HTTP_STATUS_CODES.get(status, 'Unknown'))
-        elif ' ' in status:
-            status = status.strip()
-            code = int(status.split()[0])
-        else:
-            raise ValueError('String status line without a reason phrase.')
-        if not 100 <= code <= 999:
-            raise ValueError('Status code out of range.')
-        self._status_code = code
-        self._status_line = str(status)
+    @status_code.setter
+    def status_code(self, code):
+        self._status_code = int(code)
 
-    def _get_status(self):
-        return self._status_line
+    @property
+    def status(self):
+        return str(self._status_code)
 
-    status = property(
-        _get_status, _set_status, None,
-        ''' A writeable property to change the HTTP response status. It accepts
-            either a numeric code (100-999) or a string with a custom reason
-            phrase (e.g. "404 Brain not found"). Both `status_line` and
-            `status_code` are updated accordingly. The return value is
-            always a status string. ''')
-    del _get_status, _set_status
+    @status.setter
+    def status(self, status):
+        self._status_code = int(status)
 
     @property
     def headers(self):

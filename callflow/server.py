@@ -9,7 +9,7 @@ import sys
 import time
 import typing
 from email.utils import formatdate
-from callflow.protocols.http import HttpToolsProtocol
+from callflow.web.protocol import HttpToolsProtocol
 from basepy.asynclog import logger
 import uvloop
 
