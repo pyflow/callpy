@@ -87,7 +87,7 @@ class Request(object):
         self.scope = scope
         self.recieve = receive
         self.environ = self._build_environ(scope)
-        self.environ['callflow.app'] = scope['app']
+        self.environ['callflow.app'] = scope.get('app', None)
         if populate_request:
             self.environ['callflow.request'] = self
 

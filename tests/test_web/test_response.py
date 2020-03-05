@@ -11,6 +11,7 @@ import copy
 import datetime
 import time
 
+
 def test_http_date():
     t = time.time()
     assert http_date(t) == time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(t))

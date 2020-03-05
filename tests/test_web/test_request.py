@@ -11,30 +11,30 @@ import copy
 import inspect
 import json
 
-env1 = {
-    'REQUEST_METHOD':       'POST',
-    'SCRIPT_NAME':          '/foo',
-    'PATH_INFO':            '/bar',
-    'QUERY_STRING':         'a=1&b=2',
-    'SERVER_NAME':          'test.callflow.org',
-    'SERVER_PORT':          '80',
-    'HTTP_HOST':            'test.callflow.org',
-    'SERVER_PROTOCOL':      'http',
-    'CONTENT_TYPE':         'text/plain; charset=utf-8',
-    'CONTENT_LENGTH':       '0',
-    'wsgi.url_scheme':      'http'
-}
-
+scope1 = {'client': ('172.29.0.10', 34784),
+ 'headers': [[b'host', b'test.callflow.org'],
+             [b'connection', b'close'],
+             [b'user-agent',
+              b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:60.0) Gecko'
+              b'/20100101 Firefox/60.0'],
+             [b'accept',
+              b'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q='
+              b'0.8'],
+             [b'accept-language', b'en-US,en;q=0.5'],
+             [b'accept-encoding', b'gzip, deflate, br']],
+ 'http_version': '0.0',
+ 'method': 'POST',
+ 'path': '/foo/bar',
+ 'query_string': b'a=1&b=2',
+ 'scheme': 'http',
+ 'server': ('172.28.0.10', 8080),
+ 'type': 'http'}
 
 def test_content_type():
     r = parse_content_type('text/plain')
     assert r == ('text/plain', {})
     r = parse_content_type('text/plain; chartset=utf-8')
     assert r == ('text/plain', {'chartset': 'utf-8'})
-
-def test_http_date():
-    t = time.time()
-    assert http_date(t) == time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(t))
 
 def test_auth():
     assert None == parse_auth(':')
@@ -63,19 +63,18 @@ def test_range_header():
     assert rv == []
 
 def test_basic_request():
-    env = dict(copy.deepcopy(env1))
-    req = Request(env, None)
-    assert 'cocopot.request' in env
+    scope = dict(copy.deepcopy(scope1))
+    req = Request(scope, None)
     assert req.args == MultiDict({'a':'1', 'b':'2'}.items())
     assert req.values == MultiDict({'a':'1', 'b':'2'}.items())
     assert req.path == '/bar'
     assert req.full_path == '/foo/bar'
     assert req.script_root == '/foo'
-    assert req.url == 'http://test.cocopot.org/foo/bar?a=1&b=2'
-    assert req.base_url == 'http://test.cocopot.org/foo/bar'
-    assert req.root_url == 'http://test.cocopot.org/foo/'
-    assert req.host_url == 'http://test.cocopot.org/'
-    assert req.host == 'test.cocopot.org'
+    assert req.url == 'http://test.callflow.org/foo/bar?a=1&b=2'
+    assert req.base_url == 'http://test.callflow.org/foo/bar'
+    assert req.root_url == 'http://test.callflow.org/foo/'
+    assert req.host_url == 'http://test.callflow.org/'
+    assert req.host == 'test.callflow.org'
     assert req.get_data() == b''
     assert req.get_data(as_text=True) == ''
     assert req.blueprint == None
@@ -101,24 +100,22 @@ def test_basic_request():
     assert "Request" in repr(req)
 
 def test_basic_request2():
-    env = dict(copy.deepcopy(env1))
-    env['HTTP_X_FORWARDED_HOST'] = 'test.cocopot.org'
-    req = Request(env, None)
-    assert req.host == 'test.cocopot.org'
-    env['HTTP_X_FORWARDED_HOST'] = 'test.cocopot.org, a.proxy.org'
-    req = Request(env, None)
-    assert req.host == 'test.cocopot.org'
-    env = dict(copy.deepcopy(env1))
-    env.pop('HTTP_HOST')
-    env['SERVER_PORT'] = '8080'
-    req = Request(env, None)
-    assert req.host == 'test.cocopot.org:8080'
+    scope = dict(copy.deepcopy(scope1))
+    scope['headers'].append([b'x_forwarded_host', b'test.callflow.org'])
+    req = Request(scope, None)
+    assert req.host == 'test.callflow.org'
+    scope['headers'].append([b'x_forwarded_host', b'test.callflow.org, a.proxy.org'])
+    req = Request(scope, None)
+    assert req.host == 'test.callflow.org'
+    scope = dict(copy.deepcopy(scope1))
+    req = Request(scope, None)
+    assert req.host == 'test.callflow.org:8080'
 
 def test_basic_error():
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['wsgi.input'] = BytesIO(to_bytes('a'*20))
     env['CONTENT_LENGTH'] = '20a'
-    req = Request(env, None)
+    req = Request(scope, None)
     assert req.content_length == 0
 
 
@@ -129,20 +126,20 @@ def test_cookie_dict():
     t['a=a; b=b'] = {'a': 'a', 'b':'b'}
     t['a=a; a=b'] = {'a': 'b'}
     for k, v in t.items():
-        env = dict(copy.deepcopy(env1))
+        scope = dict(copy.deepcopy(scope1))
         env.update({'HTTP_COOKIE': k})
-        req = Request(env, None)
+        req = Request(scope, None)
         for n in v:
             assert v[n] == req.cookies[n]
             assert v[n] == req.get_cookie(n)
 
 def test_form_data():
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     form_data = 'c=1&d=woo'
     env['CONTENT_TYPE'] = 'application/x-www-form-urlencoded'
     env['wsgi.input'] = BytesIO(to_bytes(form_data))
     env['CONTENT_LENGTH'] = len(form_data)
-    req = Request(env, None)
+    req = Request(scope, None)
     assert req.input_stream == env['wsgi.input']
     assert req.args == MultiDict({'a':'1', 'b':'2'}.items())
     assert req.form == FormsDict({'c':'1', 'd':'woo'}.items())
@@ -151,7 +148,7 @@ def test_form_data():
     assert req.values == MultiDict({'a':'1', 'b':'2', 'c':'1', 'd':'woo'}.items())
 
 def test_multipart():
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     form_data = '''-----------------------------9051914041544843365972754266
 Content-Disposition: form-data; name="text"
 
@@ -174,7 +171,7 @@ Content-Type: text/html
     env['wsgi.input'] = BytesIO(to_bytes(form_data))
     env['CONTENT_LENGTH'] = len(form_data)
     env['QUERY_STRING'] = ''
-    req = Request(env, None)
+    req = Request(scope, None)
     assert req.args == MultiDict()
     assert req.form == FormsDict({'text':'text default'}.items())
     assert req.values == MultiDict({'text':'text default'}.items())
@@ -188,11 +185,11 @@ Content-Type: text/html
 
 
 def _test_chunked(body, expect):
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['wsgi.input'] = BytesIO(to_bytes(body))
     env['HTTP_TRANSFER_ENCODING'] = 'chunked'
     env['QUERY_STRING'] = ''
-    req = Request(env, None)
+    req = Request(scope, None)
     assert req.chunked == True
     if inspect.isclass(expect) and issubclass(expect, Exception):
         with pytest.raises(BadRequest):
@@ -216,75 +213,75 @@ def test_chunked():
 
 def test_auth():
     user, pwd = 'marc', 'secret'
-    basic = to_unicode(base64.b64encode(to_bytes('%s:%s' % (user, pwd))))
-    env = dict(copy.deepcopy(env1))
-    r = Request(env)
+    basic = base64.b64encode(to_bytes('%s:%s' % (user, pwd)))
+    scope = dict(copy.deepcopy(scope1))
+    r = Request(scope, None)
     assert r.authorization == None
-    env['HTTP_AUTHORIZATION'] = 'basic %s' % basic
-    r = Request(env)
+    scope['headers'].append([b'authorization',  b'basc ' + basic])
+    r = Request(scope, None)
     assert r.authorization == (user, pwd)
 
 def test_remote_addr():
     ips = ['1.2.3.4', '2.3.4.5', '3.4.5.6']
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['HTTP_X_FORWARDED_FOR'] = ', '.join(ips)
-    r = Request(env)
+    r = Request(scope, None)
     assert r.remote_addr == ips[0]
 
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['HTTP_X_FORWARDED_FOR'] = ', '.join(ips)
     env['REMOTE_ADDR'] = ips[1]
-    r = Request(env)
+    r = Request(scope, None)
     assert r.remote_addr == ips[0]
 
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['REMOTE_ADDR'] = ips[1]
-    r = Request(env)
+    r = Request(scope, None)
     assert r.remote_addr == ips[1]
 
 def test_remote_route():
-    ips = ['1.2.3.4', '2.3.4.5', '3.4.5.6']
-    env = dict(copy.deepcopy(env1))
-    env['HTTP_X_FORWARDED_FOR'] = ', '.join(ips)
-    r = Request(env)
+    ips = [b'1.2.3.4', b'2.3.4.5', b'3.4.5.6']
+    scope = dict(copy.deepcopy(scope1))
+    scope['headers'].append([b'x_forwarded_for', b', '.join(ips)])
+    r = Request(scope, None)
     assert r.remote_route == ips
 
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['HTTP_X_FORWARDED_FOR'] = ', '.join(ips)
     env['REMOTE_ADDR'] = ips[1]
-    r = Request(env)
+    r = Request(scope, None)
     assert r.remote_route == ips
 
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['REMOTE_ADDR'] = ips[1]
-    r = Request(env)
+    r = Request(scope, None)
     assert r.remote_route == [ips[1],]
 
 
 def test_json_header_empty_body():
     """Request Content-Type is application/json but body is empty"""
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['CONTENT_TYPE'] = 'application/json; charset=UTF-8'
     env['CONTENT_LENGTH'] = 0
-    r = Request(env)
+    r = Request(scope, None)
     assert r.json == None
 
 def test_json_valid():
     """ Environ: Request.json property. """
     test = dict(a=5, b='test', c=[1,2,3])
-    env = dict(copy.deepcopy(env1))
+    scope = dict(copy.deepcopy(scope1))
     env['CONTENT_TYPE'] = 'application/json; charset=UTF-8'
     env['wsgi.input'] = BytesIO(to_bytes(json.dumps(test)))
     env['CONTENT_LENGTH'] = str(len(json.dumps(test)))
-    r = Request(env)
+    r = Request(scope, None)
     assert r.json == test
 
 
 def test_json_forged_header_issue616():
     test = dict(a=5, b='test', c=[1,2,3])
-    env = dict(copy.deepcopy(env1))
-    env['CONTENT_TYPE'] = 'text/plain;application/json'
+    scope = dict(copy.deepcopy(scope1))
+    scope['headers'].append([b'content_type', b'text/plain;application/json'])
+    scope['headers'].append([b'content_length', len(json.dumps(test))])
     env['wsgi.input'] = BytesIO(to_bytes(json.dumps(test)))
-    env['CONTENT_LENGTH'] = str(len(json.dumps(test)))
-    r = Request(env)
+    r = Request(scope, None)
     assert r.json == None
