@@ -193,8 +193,8 @@ def test_non_string_header():
     response = Response()
     response['x-test'] = 5
     assert '5' == response['x-test']
-    response['x-test'] = None
-    assert 'None' == response['x-test']
+    with pytest.raises(ValueError):
+        response['x-test'] = None
 
 def test_expires_header():
     import datetime

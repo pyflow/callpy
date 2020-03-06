@@ -2,17 +2,25 @@
 import sys
 from functools import update_wrapper
 from datetime import datetime, timedelta
-import cgi
+import typing
 import email
 import email.utils
 import base64
 import time
-from tempfile import TemporaryFile
+import http.cookies
+import json
+import typing
+from collections.abc import Mapping
+
+from .datastructures import URL, FormData, Headers, QueryParams, State
+from .types import Message, Receive, Scope, Send
 from .errors import HTTPError, BadRequest
 from .utils import cached_property
-from .datastructures import MultiDict, FileUpload, FormsDict, WSGIHeaders
+from .datastructures import MultiDict, FormsDict, HeaderDict
+from .formparsers import FormParser, MultiPartParser
 from io import StringIO, BytesIO
 from http.cookies import SimpleCookie
+from multipart.multipart import parse_options_header
 from .utils import (to_unicode, to_bytes, urlencode, urldecode, urlquote, urljoin, json)
 
 from .errors import BadRequest
@@ -32,9 +40,9 @@ def parse_auth(header):
     """ Parse rfc2617 HTTP authentication header string (basic) and return (user,pass) tuple or None"""
     try:
         method, data = header.split(None, 1)
-        if method.lower() == 'basic':
-            user, pwd = base64.b64decode(data).split(':', 1)
-            return user, pwd
+        if method.strip().lower() == b'basic':
+            user, pwd = base64.b64decode(data).split(b':', 1)
+            return to_unicode(user), to_unicode(pwd)
     except (KeyError, ValueError, Exception):
         return None
 
@@ -58,7 +66,7 @@ def parse_range_header(header, maxlen=0):
             pass
 
 def parse_content_type(content_type):
-    parts = content_type.split(';')
+    parts = to_unicode(content_type).split(';')
     params = {}
     for part in parts[1:]:
         if '=' not in part:
@@ -85,60 +93,9 @@ class Request(object):
 
     def __init__(self, scope, receive, populate_request=True):
         self.scope = scope
-        self.recieve = receive
-        self.environ = self._build_environ(scope)
-        self.environ['callflow.app'] = scope.get('app', None)
+        self._recieve = receive
         if populate_request:
-            self.environ['callflow.request'] = self
-
-
-    def _build_environ(self, scope):
-        """
-        Builds a scope and request message into a WSGI environ object.
-        """
-        environ = {
-            "REQUEST_METHOD": scope["method"],
-            "SCRIPT_NAME": "",
-            "PATH_INFO": scope["path"],
-            "QUERY_STRING": scope["query_string"].decode("ascii"),
-            "SERVER_PROTOCOL": "HTTP/%s" % scope["http_version"],
-            "wsgi.version": (1, 0),
-            "wsgi.url_scheme": scope.get("scheme", "http"),
-            "wsgi.input": None, #io.BytesIO(body),
-            "wsgi.errors": sys.stdout,
-            "wsgi.multithread": True,
-            "wsgi.multiprocess": True,
-            "wsgi.run_once": False,
-        }
-
-        # Get server name and port - required in WSGI, not in ASGI
-        server = scope.get("server")
-        if server is None:
-            server = ("localhost", 80)
-        environ["SERVER_NAME"] = server[0]
-        environ["SERVER_PORT"] = server[1]
-
-        # Get client IP address
-        client = scope.get("client")
-        if client is not None:
-            environ["REMOTE_ADDR"] = client[0]
-
-        # Go through headers and make them into environ entries
-        for name, value in scope.get("headers", []):
-            name = name.decode("latin1")
-            if name == "content-length":
-                corrected_name = "CONTENT_LENGTH"
-            elif name == "content-type":
-                corrected_name = "CONTENT_TYPE"
-            else:
-                corrected_name = "HTTP_%s" % name.upper().replace("-", "_")
-            # HTTPbis say only ASCII chars are allowed in headers, but we latin1 just in case
-            value = value.decode("latin1")
-            if corrected_name in environ:
-                value = environ[corrected_name] + "," + value
-            environ[corrected_name] = value
-        return environ
-
+            self.scope['callflow.request'] = self
 
     def __repr__(self):
         # make sure the __repr__ even works if the request was created
@@ -149,7 +106,7 @@ class Request(object):
             args.append("'%s'" % to_unicode(self.url, self.url_charset))
             args.append('[%s]' % self.method)
         except Exception:
-            args.append('(invalid WSGI environ)')
+            args.append('(invalid ASGI scope )')
 
         return '<%s %s>' % (
             self.__class__.__name__,
@@ -179,19 +136,10 @@ class Request(object):
     def __exit__(self, exc_type, exc_value, tb):
         self.close()
 
-    @cached_property
-    def stream(self):
-        stream = self.get_input_stream()
-        stream.seek(0)
-        return stream
-
-    @property
-    def input_stream(self):
-        return self.environ.get('wsgi.input')
 
     @cached_property
     def args(self):
-        query_string = self.environ.get('QUERY_STRING', '')
+        query_string = self.query_string
         if query_string:
             return MultiDict(urldecode(query_string))
         else:
@@ -226,153 +174,109 @@ class Request(object):
     @cached_property
     def chunked(self):
         """ True if Chunked transfer encoding was. """
-        return 'chunked' in self.environ.get('HTTP_TRANSFER_ENCODING', '').lower()
+        return 'chunked' in self.headers.get('transfer-encoding', '').lower()
 
-    def iter_body(self, read, bufsize):
-        maxread = max(0, self.content_length)
-        while maxread:
-            part = read(min(maxread, bufsize))
-            if not part: break
-            yield part
-            maxread -= len(part)
+    async def stream(self) -> typing.AsyncGenerator[bytes, None]:
+        if hasattr(self, "_body"):
+            yield self._body
+            yield b""
+            return
 
-    def iter_chunked(self, read, bufsize):
-        err = BadRequest('Error while parsing chunked transfer body.')
-        rn, sem, bs = to_bytes('\r\n'), to_bytes(';'), to_bytes('')
+        if self._stream_consumed:
+            raise RuntimeError("Stream consumed")
+
+        self._stream_consumed = True
         while True:
-            header = read(1)
-            while header[-2:] != rn:
-                c = read(1)
-                header += c
-                if not c: raise err
-                if len(header) > bufsize: raise err
-            size, _, _ = header.partition(sem)
+            message = await self._receive()
+            if message["type"] == "http.request":
+                body = message.get("body", b"")
+                if body:
+                    yield body
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                self._is_disconnected = True
+                raise ClientDisconnect()
+        yield b""
+
+    async def body(self) -> bytes:
+        if not hasattr(self, "_body"):
+            chunks = []
+            async for chunk in self.stream():
+                chunks.append(chunk)
+            self._body = b"".join(chunks)
+        return self._body
+
+    async def json(self) -> typing.Any:
+        if not hasattr(self, "_json"):
+            body = await self.body()
+            self._json = json.loads(body)
+        return self._json
+
+    async def form(self) -> FormData:
+        if not hasattr(self, "_form"):
+            assert (
+                parse_options_header is not None
+            ), "The `python-multipart` library must be installed to use form parsing."
+            content_type_header = self.headers.get("Content-Type")
+            content_type, options = parse_options_header(content_type_header)
+            if content_type == b"multipart/form-data":
+                multipart_parser = MultiPartParser(self.headers, self.stream())
+                self._form = await multipart_parser.parse()
+            elif content_type == b"application/x-www-form-urlencoded":
+                form_parser = FormParser(self.headers, self.stream())
+                self._form = await form_parser.parse()
+            else:
+                self._form = FormData()
+        return self._form
+
+    async def close(self) -> None:
+        if hasattr(self, "_form"):
+            await self._form.close()
+
+    async def is_disconnected(self) -> bool:
+        if not self._is_disconnected:
             try:
-                maxread = int(to_unicode(size.strip()), 16)
-            except ValueError:
-                raise err
-            if maxread == 0: break
-            buff = bs
-            while maxread > 0:
-                if not buff:
-                    buff = read(min(maxread, bufsize))
-                part, buff = buff[:maxread], buff[maxread:]
-                if not part: raise err
-                yield part
-                maxread -= len(part)
-            if read(2) != rn:
-                raise err
+                message = await asyncio.wait_for(self._receive(), timeout=0.0000001)
+            except asyncio.TimeoutError:
+                message = {}
 
-    def get_input_stream(self):
-        try:
-            read_func = self.environ['wsgi.input'].read
-        except KeyError:
-            self.environ['wsgi.input'] = BytesIO()
-            return self.environ['wsgi.input']
-        if self.chunked:
-            body, body_size, is_temp_file = BytesIO(), 0, False
-            for part in self.iter_chunked(read_func, MEMFILE_MAX):
-                body.write(part)
-                body_size += len(part)
-                if not is_temp_file and body_size > MEMFILE_MAX:
-                    body, tmp = TemporaryFile(mode='w+b'), body
-                    body.write(tmp.getvalue())
-                    del tmp
-                    is_temp_file = True
-        else:
-            if self.content_length > MEMFILE_MAX:
-                body = TemporaryFile(mode='w+b')
-            else:
-                body = BytesIO()
-                for part in self.iter_body(read_func, MEMFILE_MAX):
-                    body.write(part)
-        self.environ['wsgi.input'] = body
-        body.seek(0)
-        return body
+            if message.get("type") == "http.disconnect":
+                self._is_disconnected = True
 
-    def parse_form_data(self):
-        post = FormsDict()
-        # We default to application/x-www-form-urlencoded for everything that
-        # is not multipart and take the fast path (also: 3.1 workaround)
-        if not self.content_type.startswith('multipart/'):
-            pairs = urldecode(to_unicode(self.get_data()))
-            for key, value in pairs:
-                post[key] = value
-            return post
+        return self._is_disconnected
 
-        safe_env = {'QUERY_STRING': ''}  # Build a safe environment for cgi
-        for key in ('REQUEST_METHOD', 'CONTENT_TYPE', 'CONTENT_LENGTH'):
-            if key in self.environ:
-                safe_env[key] = self.environ[key]
-        args = dict(fp=self.stream, environ=safe_env, keep_blank_values=True)
-        args['encoding'] = 'utf8'
-        data = cgi.FieldStorage(**args)
-        self.environ['_cgi.FieldStorage'] = data  #http://bugs.python.org/issue18394
-        data = data.list or []
-        for item in data:
-            if item.filename:
-                post[item.name] = FileUpload(item.file, item.name,
-                                             item.filename, item.headers)
-            else:
-                post[item.name] = item.value
-        return post
-
-    @cached_property
-    def parsed_form_data(self):
-        return self.parse_form_data()
-
-    @cached_property
-    def form(self):
-        form = FormsDict()
-        for name, item in self.parsed_form_data.allitems():
-            if not isinstance(item, FileUpload):
-                form[name] = item
-        return form
-
-    @cached_property
-    def values(self):
-        """Combined multi dict for `args` and `form`."""
-        args = []
-        for d in self.args, self.form:
-            if not isinstance(d, MultiDict):
-                for k, v in d.items():
-                    args.append((k, v))
-            else:
-                for k, v in d.iterallitems():
-                    args.append((k, v))
-        return MultiDict(args)
-
-    @cached_property
-    def files(self):
-        files = FormsDict()
-        for name, item in self.parsed_form_data.allitems():
-            if isinstance(item, FileUpload):
-                files[name] = item
-        return files
+    async def send_push_promise(self, path: str) -> None:
+        if "http.response.push" in self.scope.get("extensions", {}):
+            raw_headers = []
+            for name in SERVER_PUSH_HEADERS_TO_COPY:
+                for value in self.headers.getlist(name):
+                    raw_headers.append(
+                        (name.encode("latin-1"), value.encode("latin-1"))
+                    )
+            await self._send(
+                {"type": "http.response.push", "path": path, "headers": raw_headers}
+            )
 
     def get_host(self):
-        """Return the real host for the given WSGI environment.  This first checks
-        the `X-Forwarded-Host` header, then the normal `Host` header, and finally
-        the `SERVER_NAME` environment variable (using the first one it finds).
-        """
-        environ = self.environ
-        if 'HTTP_X_FORWARDED_HOST' in environ:
-            rv = environ['HTTP_X_FORWARDED_HOST'].split(',', 1)[0].strip()
-        elif 'HTTP_HOST' in environ:
-            rv = environ['HTTP_HOST']
+        headers = self.headers
+        if 'x-forwarded-host' in headers:
+            rv = headers['x-forwarded-host'].split(',', 1)[0].strip()
+        elif 'host' in headers:
+            rv = headers['host']
         else:
-            rv = environ['SERVER_NAME']
-            if (environ['wsgi.url_scheme'], environ['SERVER_PORT']) not \
+            rv, port = self.scope['server']
+            if (self.scope['type'], port) not \
                in (('https', '443'), ('http', '80')):
-                rv += ':%s'%(environ['SERVER_PORT'])
+                rv += ':%s'%(port)
         return rv
 
 
     def get_content_length(self):
-        """Returns the content length from the WSGI environment as
+        """Returns the content length from the headers as
         integer.  If it's not available `None` is returned.
         """
-        content_length = self.environ.get('CONTENT_LENGTH')
+        content_length = self.headers.get('content-length')
         if content_length is not None:
             try:
                 return max(0, int(content_length))
@@ -394,16 +298,15 @@ class Request(object):
             'http://localhost/script/'
 
         """
-        environ = self.environ
-        tmp = [environ['wsgi.url_scheme'], '://', self.get_host()]
+        scope = self.scope
+        tmp = [scope['type'], '://', self.get_host()]
         cat = tmp.append
         if host_only:
             return ''.join(tmp) + '/'
-        cat(urlquote(environ.get('SCRIPT_NAME', '')).rstrip('/'))
+        cat(urlquote(scope.get('root_path', '')).rstrip('/'))
         cat('/')
         if not root_only:
-            print(type(environ.get('PATH_INFO')))
-            cat(urlquote(environ.get('PATH_INFO', '').lstrip('/')))
+            cat(urlquote(scope.get('path', '').lstrip('/')))
             if not strip_querystring:
                 qs = self.query_string
                 if qs:
@@ -413,7 +316,7 @@ class Request(object):
     @cached_property
     def cookies(self):
         """Read only access to the retrieved cookie values as dictionary."""
-        cookies = SimpleCookie(self.environ.get('HTTP_COOKIE', '')).values()
+        cookies = SimpleCookie(self.headers.get('cookie')).values()
         return FormsDict((c.key, c.value) for c in cookies)
 
     def get_cookie(self, key):
@@ -423,9 +326,7 @@ class Request(object):
 
     @cached_property
     def headers(self):
-        """The headers from the WSGI environ as immutable
-        """
-        return WSGIHeaders(self.environ)
+        return HeaderDict(list(map(lambda x: [to_unicode(x[0]), to_unicode(x[1])], self.scope['headers'])))
 
     @cached_property
     def path(self):
@@ -433,7 +334,7 @@ class Request(object):
         info in the WSGI environment but will always include a leading slash,
         even if the URL root is accessed.
         """
-        return '/' + to_unicode(self.environ.get('PATH_INFO', '')).lstrip('/')
+        return '/' + self.scope.get('path', '').lstrip('/')
 
     @property
     def script_name(self):
@@ -441,7 +342,7 @@ class Request(object):
             level (server or routing middleware) before the application was
             called. This script path is returned with leading and tailing
             slashes. """
-        script_name = self.environ.get('SCRIPT_NAME', '').strip('/')
+        script_name = self.scope.get('root_path', '').strip('/')
         return '/' + script_name + '/' if script_name else '/'
 
     @property
@@ -452,7 +353,7 @@ class Request(object):
     @cached_property
     def script_root(self):
         """The root path of the script without the trailing slash."""
-        raw_path = to_unicode(self.environ.get('SCRIPT_NAME') or '',
+        raw_path = to_unicode(self.scope.get('root_path') or '',
                                        self.charset, self.encoding_errors)
         return raw_path.rstrip('/')
 
@@ -489,22 +390,23 @@ class Request(object):
 
     @property
     def query_string(self):
-        return self.environ.get('QUERY_STRING', '')
+        return to_unicode(self.scope.get('query_string', ''))
 
     @property
     def method(self):
-        return self.environ.get('REQUEST_METHOD', 'GET').upper()
+        return self.scope.get('method', 'GET').upper()
 
     @cached_property
     def access_route(self):
         """If a forwarded header exists this is a list of all ip addresses
         from the client ip to the last proxy server.
         """
-        if 'HTTP_X_FORWARDED_FOR' in self.environ:
-            addr = self.environ['HTTP_X_FORWARDED_FOR'].split(',')
+        headers = self.headers
+        if 'x-forwarded-for' in headers:
+            addr = headers['x-forwarded-for'].split(',')
             return list([x.strip() for x in addr])
-        elif 'REMOTE_ADDR' in self.environ:
-            return list([self.environ['REMOTE_ADDR']])
+        elif 'client' in self.scope:
+            return list([self.scope['client'][0]])
         return list()
 
     remote_route = access_route
@@ -516,43 +418,43 @@ class Request(object):
         return route[0] if route else None
 
 
-    is_xhr = property(lambda x: x.environ.get('HTTP_X_REQUESTED_WITH', '')
+    is_xhr = property(lambda x: x.headers.get('x-requested-with', '')
                       .lower() == 'xmlhttprequest', doc='''
         True if the request was triggered via a JavaScript XMLHttpRequest.
         This only works with libraries that support the `X-Requested-With`
         header and set it to "XMLHttpRequest".  Libraries that do that are
         prototype, jQuery and Mochikit and probably some more.''')
-    is_secure = property(lambda x: x.environ['wsgi.url_scheme'] == 'https',
+    is_secure = property(lambda x: x.scope['type'] == 'https',
                          doc='`True` if the request is secure.')
 
 
     @cached_property
     def if_modified_since(self):
         """The parsed `If-Modified-Since` header as datetime object."""
-        return parse_date(self.environ.get('HTTP_IF_MODIFIED_SINCE'))
+        return parse_date(self.headers.get('if-modified-since'))
 
     @cached_property
     def if_unmodified_since(self):
         """The parsed `If-Unmodified-Since` header as datetime object."""
-        return parse_date(self.environ.get('HTTP_IF_UNMODIFIED_SINCE'))
+        return parse_date(self.headers.get('if-unmodified-since'))
 
 
     @cached_property
     def range(self):
         """The parsed `Range` header.
         """
-        return parse_range_header(self.environ.get('HTTP_RANGE'))
+        return parse_range_header(self.headers.get('range'))
 
 
     @cached_property
     def authorization(self):
-        header = self.environ.get('HTTP_AUTHORIZATION')
+        header = self.headers.get('Authorization')
         if not header: return None
-        return parse_auth(header)
+        return parse_auth(header.encode('ascii'))
 
     @property
     def content_type(self):
-        return self.environ.get('CONTENT_TYPE', '')
+        return self.headers.get('content-type', '')
 
 
     @cached_property
@@ -566,7 +468,7 @@ class Request(object):
 
     @cached_property
     def parsed_content_type(self):
-        return parse_content_type(self.environ.get('CONTENT_TYPE', ''))
+        return parse_content_type(self.headers.get('content-type', ''))
 
     @property
     def mimetype(self):
