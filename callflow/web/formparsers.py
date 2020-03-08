@@ -10,25 +10,6 @@ from urllib.parse import unquote_plus
 from .datastructures import FormData, Headers, UploadFile
 
 
-# Get constants.  Since iterating over a str on Python 2 gives you a 1-length
-# string, but iterating over a bytes object on Python 3 gives you an integer,
-# we need to save these constants.
-CR = b'\r'[0]
-LF = b'\n'[0]
-COLON = b':'[0]
-SPACE = b' '[0]
-HYPHEN = b'-'[0]
-AMPERSAND = b'&'[0]
-SEMICOLON = b';'[0]
-LOWER_A = b'a'[0]
-LOWER_Z = b'z'[0]
-NULL = b'\x00'[0]
-
-
-lower_char = lambda c: c | 0x20
-ord_char = lambda c: c
-join_bytes = lambda b: bytes(list(b))
-
 # These are regexes for parsing header values.
 SPECIAL_CHARS = re.escape(b'()<>@,;:\\"/[]?={} \t')
 QUOTED_STR = br'"(?:\\.|[^"])*"'
