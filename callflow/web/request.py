@@ -11,21 +11,31 @@ import http.cookies
 import json
 import typing
 from collections.abc import Mapping
+import asyncio
 
 from .datastructures import URL, FormData, Headers, QueryParams, State
 from .types import Message, Receive, Scope, Send
 from .errors import HTTPError, BadRequest
 from .utils import cached_property
 from .datastructures import MultiDict, FormsDict, HeaderDict
-from .formparsers import FormParser, MultiPartParser
+from .formparsers import FormParser, MultiPartParser, parse_options_header
 from io import StringIO, BytesIO
 from http.cookies import SimpleCookie
-from multipart.multipart import parse_options_header
 from .utils import (to_unicode, to_bytes, urlencode, urldecode, urlquote, urljoin, json)
 
 from .errors import BadRequest
 
 MEMFILE_MAX = 4*1024*1024
+
+
+SERVER_PUSH_HEADERS_TO_COPY = {
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "cache-control",
+    "user-agent",
+}
+
 
 def parse_date(ims):
     """ Parse rfc1123, rfc850 and asctime timestamps and return UTC epoch. """
@@ -75,6 +85,17 @@ def parse_content_type(content_type):
         params[k] = v
     return (parts[0], params)
 
+class ClientDisconnect(Exception):
+    pass
+
+async def empty_receive() -> Message:
+    raise RuntimeError("Receive channel has not been made available")
+
+
+async def empty_send(message: Message) -> None:
+    raise RuntimeError("Send channel has not been made available")
+
+
 class Request(object):
     """
     """
@@ -91,9 +112,12 @@ class Request(object):
     #: happened when matching, this will be `None`.
     view_args = None
 
-    def __init__(self, scope, receive, populate_request=True):
+    def __init__(self, scope, receive=empty_receive, send=empty_send, populate_request=True):
         self.scope = scope
-        self._recieve = receive
+        self._receive = receive
+        self._send = send
+        self._stream_consumed = False
+        self._is_disconnected = False
         if populate_request:
             self.scope['callflow.request'] = self
 
@@ -121,22 +145,6 @@ class Request(object):
         """
         return self.charset
 
-    def close(self):
-        """Closes associated resources of this request object.  This
-        closes all file handles explicitly.  You can also use the request
-        object in a with statement with will automatically close it.
-
-        """
-        if hasattr(self.stream, 'close'):
-            self.stream.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, tb):
-        self.close()
-
-
     @cached_property
     def args(self):
         query_string = self.query_string
@@ -144,32 +152,6 @@ class Request(object):
             return MultiDict(urldecode(query_string))
         else:
             return MultiDict()
-
-    @property
-    def data(self):
-        return self.get_data()
-
-    def get_data(self, cache=True, as_text=False):
-        """This reads the buffered incoming data from the client into one
-        bytestring.  By default this is cached but that behavior can be
-        changed by setting `cache` to `False`.
-
-        Usually it's a bad idea to call this method without checking the
-        content length first as a client could send dozens of megabytes or more
-        to cause memory problems on the server.
-
-        If `as_text` is set to `True` the return value will be a decoded
-        unicode string.
-
-        """
-        rv = getattr(self, '_cached_data', None)
-        if rv is None:
-            rv = self.stream.read()
-            if cache:
-                self._cached_data = rv
-        if as_text:
-            rv = rv.decode(self.charset, self.encoding_errors)
-        return rv
 
     @cached_property
     def chunked(self):
@@ -215,9 +197,6 @@ class Request(object):
 
     async def form(self) -> FormData:
         if not hasattr(self, "_form"):
-            assert (
-                parse_options_header is not None
-            ), "The `python-multipart` library must be installed to use form parsing."
             content_type_header = self.headers.get("Content-Type")
             content_type, options = parse_options_header(content_type_header)
             if content_type == b"multipart/form-data":
@@ -492,55 +471,3 @@ class Request(object):
         """The name of the current blueprint"""
         if '.' in self.endpoint:
             return self.endpoint.rsplit('.', 1)[0]
-
-    @property
-    def json(self):
-        """If the mimetype is `application/json` this will contain the
-        parsed JSON data.  Otherwise this will be `None`.
-
-        The `get_json` method should be used instead.
-        """
-        return self.get_json(silent=True)
-
-    def get_json(self, force=False, silent=False, cache=True):
-        """Parses the incoming JSON request data and returns it.  If
-        parsing fails the `on_json_loading_failed` method on the
-        request object will be invoked.  By default this function will
-        only load the json data if the mimetype is ``application/json``
-        but this can be overriden by the `force` parameter.
-
-        Args:
-
-          * force: if set to `True` the mimetype is ignored.
-          * silent: if set to `False` this method will fail silently
-                       and return `False`.
-          * cache: if set to `True` the parsed JSON data is remembered
-                      on the request.
-        """
-        _missing = object()
-        rv = getattr(self, '_cached_json', _missing)
-        if rv is not _missing:
-            return rv
-
-        if self.mimetype != 'application/json' and not force:
-            return None
-
-        # We accept a request charset against the specification as
-        # certain clients have been using this in the past.  This
-        # fits our general approach of being nice in what we accept
-        # and strict in what we send out.
-        request_charset = self.mimetype_params.get('charset', 'utf-8')
-        try:
-            data = to_unicode(self.get_data(cache=False))
-            if request_charset is not None:
-                rv = json.loads(data, encoding=request_charset)
-            else:
-                rv = json.loads(data)
-        except ValueError as e:
-            if silent:
-                rv = None
-            else:
-                raise BadRequest()
-        if cache:
-            self._cached_json = rv
-        return rv
