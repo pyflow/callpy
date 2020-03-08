@@ -85,23 +85,20 @@ def parse_options_header(value):
 
     return ctype, options
 
-class ParseError(ValueError):
-    offset = -1
 
-
-class MultipartParseError(ParseError):
+class MultiPartParseError(ValueError):
     pass
 
 
-class QuerystringParseError(ParseError):
+class QueryStringParseError(ValueError):
     pass
 
 
-class QuerystringParser():
+class QueryStringParser():
     def __init__(self, strict_parsing=False,
                  max_size=float('inf')):
         self.buffer = bytes()
-        self.messages = []
+        self.items = []
         self.logger = logger.sync()
 
         # Max-size stuff
@@ -156,13 +153,13 @@ class QuerystringParser():
             equal_pos = buffer.find(b'=', i, sep_pos)
             if equal_pos == -1:
                 if strict_parsing:
-                    raise QuerystringParseError('not found = in pair, got {}'.format(buffer[:sep_pos]))
+                    raise QueryStringParseError('not found = in pair, got {}'.format(buffer[:sep_pos]))
                 pair = (unquote_plus(buffer[i:sep_pos].decode('latin-1')), None)
             else:
                 pair = (unquote_plus(buffer[i:equal_pos].decode('latin-1')),
                     unquote_plus(buffer[equal_pos+1:sep_pos].decode('latin-1')))
 
-            self.messages.append(pair)
+            self.items.append(pair)
             i += (sep_pos + 1)
 
         if i > 0:
@@ -170,9 +167,9 @@ class QuerystringParser():
 
 
     def gets(self):
-        messages = self.messages
-        self.messages = []
-        return messages
+        items = self.items
+        self.items = []
+        return items
 
     def __repr__(self):
         return "%s(strict_parsing=%r, max_size=%r)" % (
@@ -207,57 +204,126 @@ class FormParser:
 
     async def parse(self) -> FormData:
         # Create the parser.
-        parser = QuerystringParser()
+        parser = QueryStringParser()
         # Feed the parser with data from the request.
         async for chunk in self.stream:
             if chunk:
                 parser.feed(chunk)
             else:
                 parser.feed(b"")
-            messages = parser.gets()
+            items = parser.gets()
 
-        return FormData(messages)
+        return FormData(items)
 
+class FormDataPart:
+    def __init__(self, charset="latin-1"):
+        self.data = b""
+        self.file = None
+        self.headerlist = []
+        self.disposition = None
+        self.name = None
+        self.filename = None
+        self.content_type = None
+        self.charset = charset
+        self.content_length = -1
+        self.feeding_data = False
+
+    def feed_line(self, line):
+        if self.feeding_data:
+            self.feed_data(line)
+        else:
+            self.feed_header(line)
+
+    def feed_header(self, line):
+        if not line.strip():
+            self.finalize_header()
+        elif line[0] in b" \t" and self.headerlist:
+            name, value = self.headerlist.pop()
+            self.headerlist.append((name, value + line.strip()))
+        else:
+            if b":" not in line:
+                raise MultiPartParseError("Syntax error in header: No colon.")
+
+            name, value = line.split(b":", 1)
+            self.headerlist.append((name.strip(), value.strip()))
+
+    def finalize_header(self):
+        for (key, value) in self.headerlist:
+            k = key.title()
+            if k == b"Content-Disposition":
+                self.disposition, self.options = parse_options_header(value)
+                self.name = _user_safe_decode(self.options.get(b"name"), self.charset)
+                self.filename = _user_safe_decode(self.options.get(b"filename"), self.charset)
+            elif k == b"Content-Type":
+                self.content_type, options = parse_options_header(value)
+                self.charset = options.get(b"charset").decode('latin-1') or self.charset
+            elif k == b"Content-Length":
+                self.content_length = int(value)
+
+        if not self.disposition:
+            raise MultiPartParseError("Content-Disposition header is missing.")
+
+        self.feeding_data = True
+
+    def feed_data(self, line):
+        pass
+
+    def get(self):
+        if self.data:
+            return (self.name, self.data)
+        elif self.file:
+            return (self.name, self.file)
+        else:
+            raise ValueError('FormDataPart error, not contain valid data or file.')
 
 class MultiPartParser:
     def __init__(
-        self, headers: Headers, stream: typing.AsyncGenerator[bytes, None]
+        self, headers: Headers, stream: typing.AsyncGenerator[bytes, None],
+        buffer_size=2 ** 16
     ) -> None:
         self.headers = headers
         self.stream = stream
-        self.messages = []  # type: typing.List[typing.Tuple[MultiPartMessage, bytes]]
+        self.parts = []
+        self.boundary = ''
+        self.separator = ''
+        self.terminator = ''
+        self.buffer = bytes()
+        self.current_part = None
+        self.buffer_size = buffer_size
+        self.charset = 'utf-8'
 
-    def on_part_begin(self) -> None:
-        message = (MultiPartMessage.PART_BEGIN, b"")
-        self.messages.append(message)
+    def feed(self, data):
+        if not data:
+            return
+        buffer = self.buffer + data
+        lines = buffer.splitlines(keepends=True)
+        for line in lines:
+            if line.endswith(b"\r\n"):
+                line, linebreak = line[:-2], b"\r\n"
+            elif line.endswith(b"\n"):
+                line, linebreak = line[:-1], b"\n"
+                if not line:
+                    continue
+            elif line.endswith(b"\r"):
+                line, linebreak = line[:-1], b"\r"
+            else:
+                line, linebreak = line, b""
 
-    def on_part_data(self, data: bytes, start: int, end: int) -> None:
-        message = (MultiPartMessage.PART_DATA, data[start:end])
-        self.messages.append(message)
+            if not linebreak:
+                self.buffer = line
+                if len(self.buffer) >= self.buffer_size:
+                    raise MultiPartParseError('MultiPart data too long, must be less than 64KB.')
+                break
 
-    def on_part_end(self) -> None:
-        message = (MultiPartMessage.PART_END, b"")
-        self.messages.append(message)
-
-    def on_header_field(self, data: bytes, start: int, end: int) -> None:
-        message = (MultiPartMessage.HEADER_FIELD, data[start:end])
-        self.messages.append(message)
-
-    def on_header_value(self, data: bytes, start: int, end: int) -> None:
-        message = (MultiPartMessage.HEADER_VALUE, data[start:end])
-        self.messages.append(message)
-
-    def on_header_end(self) -> None:
-        message = (MultiPartMessage.HEADER_END, b"")
-        self.messages.append(message)
-
-    def on_headers_finished(self) -> None:
-        message = (MultiPartMessage.HEADERS_FINISHED, b"")
-        self.messages.append(message)
-
-    def on_end(self) -> None:
-        message = (MultiPartMessage.END, b"")
-        self.messages.append(message)
+            if line == self.separator:
+                if self.current_part:
+                    self.parts.append(self.current_part)
+                    self.current_part = FormDataPart(self.charset)
+            elif line == self.terminator:
+                self.parts.append(self.current_part)
+                self.current_part = None
+            else:
+                self.current_part.feed_line(line)
 
     async def parse(self) -> FormData:
         # Parse the Content-Type header to get the multipart boundary.
@@ -265,22 +331,12 @@ class MultiPartParser:
         charset = params.get(b"charset", "utf-8")
         if type(charset) == bytes:
             charset = charset.decode("latin-1")
-        boundary = params.get(b"boundary")
+        self.charset = charset
+        self.boundary = params.get(b"boundary")
 
-        # Callbacks dictionary.
-        callbacks = {
-            "on_part_begin": self.on_part_begin,
-            "on_part_data": self.on_part_data,
-            "on_part_end": self.on_part_end,
-            "on_header_field": self.on_header_field,
-            "on_header_value": self.on_header_value,
-            "on_header_end": self.on_header_end,
-            "on_headers_finished": self.on_headers_finished,
-            "on_end": self.on_end,
-        }
+        self.separator = b"--" + self.boundary
+        self.terminator = b"--" + self.boundary + b"--"
 
-        # Create the parser.
-        parser = multipart.MultipartParser(boundary, callbacks)
         header_field = b""
         header_value = b""
         content_disposition = None
@@ -295,9 +351,7 @@ class MultiPartParser:
 
         # Feed the parser with data from the request.
         async for chunk in self.stream:
-            parser.write(chunk)
-            messages = list(self.messages)
-            self.messages.clear()
+            self.feed(chunk)
             for message_type, message_bytes in messages:
                 if message_type == MultiPartMessage.PART_BEGIN:
                     content_disposition = None
@@ -340,5 +394,4 @@ class MultiPartParser:
                 elif message_type == MultiPartMessage.END:
                     pass
 
-        parser.finalize()
-        return FormData(items)
+        return FormData(list(map(lambda x: x.get(), self.parts)))
