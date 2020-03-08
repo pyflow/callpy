@@ -8,12 +8,7 @@ from enum import Enum
 from urllib.parse import unquote_plus
 
 from .datastructures import FormData, Headers, UploadFile
-from basepy.asynclog import logger
 
-
-# Flags for the multipart parser.
-FLAG_PART_BOUNDARY              = 1
-FLAG_LAST_BOUNDARY              = 2
 
 # Get constants.  Since iterating over a str on Python 2 gives you a 1-length
 # string, but iterating over a bytes object on Python 3 gives you an integer,
@@ -99,7 +94,6 @@ class QueryStringParser():
                  max_size=float('inf')):
         self.buffer = bytes()
         self.items = []
-        self.logger = logger.sync()
 
         # Max-size stuff
         if not isinstance(max_size, Number) or max_size < 1:
@@ -114,13 +108,9 @@ class QueryStringParser():
     def feed(self, data):
         data_len = len(data)
         if (self._current_size + data_len) > self.max_size:
-            # We truncate the length of data that we are to process.
-            new_size = int(self.max_size - self._current_size)
-            self.logger.warning("Current size is %d (max %d), so truncating "
-                                "data length from %d to %d",
-                                self._current_size, self.max_size, data_len,
-                                new_size)
-            data_len = new_size
+            raise QueryStringParseError('QueryString data size ({}) must be less than max_size({})'.format(
+                (self._current_size + data_len), self.max_size
+                ))
 
         try:
             self._internal_feed(data, data_len)
@@ -228,9 +218,9 @@ class FormDataPart:
         self.content_length = -1
         self.feeding_data = False
 
-    def feed_line(self, line):
+    async def feed_line(self, line):
         if self.feeding_data:
-            self.feed_data(line)
+            await self.feed_data(line)
         else:
             self.feed_header(line)
 
@@ -251,9 +241,10 @@ class FormDataPart:
         for (key, value) in self.headerlist:
             k = key.title()
             if k == b"Content-Disposition":
-                self.disposition, self.options = parse_options_header(value)
-                self.name = _user_safe_decode(self.options.get(b"name"), self.charset)
-                self.filename = _user_safe_decode(self.options.get(b"filename"), self.charset)
+                self.disposition, options = parse_options_header(value)
+                self.name = _user_safe_decode(options.get(b"name", b""), self.charset)
+                if b"filename" in options:
+                    self.filename = _user_safe_decode(options.get(b"filename"), self.charset)
             elif k == b"Content-Type":
                 self.content_type, options = parse_options_header(value)
                 self.charset = options.get(b"charset").decode('latin-1') or self.charset
@@ -263,10 +254,24 @@ class FormDataPart:
         if not self.disposition:
             raise MultiPartParseError("Content-Disposition header is missing.")
 
+        if self.filename:
+            self.file = UploadFile(
+                            filename=self.filename,
+                            content_type=self.content_type.decode("latin-1"),
+                        )
         self.feeding_data = True
 
-    def feed_data(self, line):
-        pass
+    async def feed_data(self, line):
+        if self.file:
+            await self.file.write(line)
+        else:
+            self.data += line
+
+    async def finalize(self):
+        if self.file:
+            await self.file.seek(0)
+        else:
+            self.data = _user_safe_decode(self.data, self.charset)
 
     def get(self):
         if self.data:
@@ -284,7 +289,7 @@ class MultiPartParser:
         self.headers = headers
         self.stream = stream
         self.parts = []
-        self.boundary = ''
+        self._boundary = ''
         self.separator = ''
         self.terminator = ''
         self.buffer = bytes()
@@ -292,9 +297,19 @@ class MultiPartParser:
         self.buffer_size = buffer_size
         self.charset = 'utf-8'
 
-    def feed(self, data):
-        if not data:
-            return
+    @property
+    def boundary(self):
+        return self._boundary
+
+    @boundary.setter
+    def boundary(self, boundary):
+        self._boundary = boundary
+        self.separator = b"--" + self.boundary
+        self.terminator = b"--" + self.boundary + b"--"
+
+    async def feed(self, data=b""):
+        data = data or b""
+        last_data = (len(data) == 0)
         buffer = self.buffer + data
         lines = buffer.splitlines(keepends=True)
         for line in lines:
@@ -309,7 +324,7 @@ class MultiPartParser:
             else:
                 line, linebreak = line, b""
 
-            if not linebreak:
+            if not linebreak and not last_data:
                 self.buffer = line
                 if len(self.buffer) >= self.buffer_size:
                     raise MultiPartParseError('MultiPart data too long, must be less than 64KB.')
@@ -317,13 +332,15 @@ class MultiPartParser:
 
             if line == self.separator:
                 if self.current_part:
+                    await self.current_part.finalize()
                     self.parts.append(self.current_part)
-                    self.current_part = FormDataPart(self.charset)
+                self.current_part = FormDataPart(self.charset)
             elif line == self.terminator:
+                await self.current_part.finalize()
                 self.parts.append(self.current_part)
                 self.current_part = None
             else:
-                self.current_part.feed_line(line)
+                await self.current_part.feed_line(line)
 
     async def parse(self) -> FormData:
         # Parse the Content-Type header to get the multipart boundary.
@@ -334,64 +351,8 @@ class MultiPartParser:
         self.charset = charset
         self.boundary = params.get(b"boundary")
 
-        self.separator = b"--" + self.boundary
-        self.terminator = b"--" + self.boundary + b"--"
-
-        header_field = b""
-        header_value = b""
-        content_disposition = None
-        content_type = b""
-        field_name = ""
-        data = b""
-        file = None  # type: typing.Optional[UploadFile]
-
-        items = (
-            []
-        )  # type: typing.List[typing.Tuple[str, typing.Union[str, UploadFile]]]
-
         # Feed the parser with data from the request.
         async for chunk in self.stream:
-            self.feed(chunk)
-            for message_type, message_bytes in messages:
-                if message_type == MultiPartMessage.PART_BEGIN:
-                    content_disposition = None
-                    content_type = b""
-                    data = b""
-                elif message_type == MultiPartMessage.HEADER_FIELD:
-                    header_field += message_bytes
-                elif message_type == MultiPartMessage.HEADER_VALUE:
-                    header_value += message_bytes
-                elif message_type == MultiPartMessage.HEADER_END:
-                    field = header_field.lower()
-                    if field == b"content-disposition":
-                        content_disposition = header_value
-                    elif field == b"content-type":
-                        content_type = header_value
-                    header_field = b""
-                    header_value = b""
-                elif message_type == MultiPartMessage.HEADERS_FINISHED:
-                    disposition, options = parse_options_header(content_disposition)
-                    field_name = _user_safe_decode(options[b"name"], charset)
-                    if b"filename" in options:
-                        filename = _user_safe_decode(options[b"filename"], charset)
-                        file = UploadFile(
-                            filename=filename,
-                            content_type=content_type.decode("latin-1"),
-                        )
-                    else:
-                        file = None
-                elif message_type == MultiPartMessage.PART_DATA:
-                    if file is None:
-                        data += message_bytes
-                    else:
-                        await file.write(message_bytes)
-                elif message_type == MultiPartMessage.PART_END:
-                    if file is None:
-                        items.append((field_name, _user_safe_decode(data, charset)))
-                    else:
-                        await file.seek(0)
-                        items.append((field_name, file))
-                elif message_type == MultiPartMessage.END:
-                    pass
+            await self.feed(chunk)
 
         return FormData(list(map(lambda x: x.get(), self.parts)))
