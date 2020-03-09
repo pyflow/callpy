@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import base64
 from io import BytesIO
 from numbers import Number
 import typing
@@ -197,6 +198,7 @@ class FormDataPart:
         self.content_type = None
         self.charset = charset
         self.content_length = -1
+        self.transfer_encoding = b'8bit'
         self.feeding_data = False
 
     async def feed_line(self, line):
@@ -231,6 +233,16 @@ class FormDataPart:
                 self.charset = options.get(b"charset").decode('latin-1') or self.charset
             elif k == b"Content-Length":
                 self.content_length = int(value)
+            elif k == b"Content-Transfer-Encoding":
+                transfer_encoding = value.lower()
+                if transfer_encoding not in [b'binary', b'8bit', b'7bit', b'base64', b'quoted-printable']:
+                    raise MultiPartParseError(
+                        'Unknown Content-Transfer-Encoding "{0}"'.format(
+                            transfer_encoding
+                        )
+                    )
+                else:
+                    self.transfer_encoding = transfer_encoding
 
         if not self.disposition:
             raise MultiPartParseError("Content-Disposition header is missing.")
@@ -252,7 +264,16 @@ class FormDataPart:
         if self.file:
             await self.file.seek(0)
         else:
-            self.data = _user_safe_decode(self.data, self.charset)
+            if self.transfer_encoding == b'base64':
+                self.data = base64.b64decode(self.data)
+            elif self.transfer_encoding == b'quoted-printable':
+                p = QueryStringParser()
+                p.feed(self.data)
+                p.feed('')
+                items = p.gets()
+                self.data = FormData(items)
+            else:
+                self.data = _user_safe_decode(self.data, self.charset)
 
     def get(self):
         if self.data:
