@@ -1,6 +1,8 @@
 import pytest
 
 from callflow.web.request import parse_date
+from callflow.web.response import text as text_response
+from callflow.web.response import html as html_response
 from callflow.web.response import (
     Response, make_response, redirect, jsonify,
     html_escape, html_quote, http_date)
@@ -20,24 +22,24 @@ def test_html():
     assert '"&lt;&#039;&#13;&#10;&#9;&quot;\\&gt;"' == html_quote('<\'\r\n\t"\\>')
 
 def test_basic_response():
-    r = make_response('text')
+    r = text_response('text')
     assert r.body == 'text'
     assert r.status_code == 200
     assert r.charset.lower() == 'utf-8'
 
-    r = make_response('redirect', 302)
+    r = text_response('redirect', 302)
     assert r.status_code == 302
 
-    r = make_response('', 999)
+    r = text_response('', 999)
     assert r.status_code == 999
 
     with pytest.raises(ValueError):
-        r = make_response('', 1099)
+        r = text_response('', 1099)
 
     with pytest.raises(ValueError):
-        r = make_response('', 99)
+        r = text_response('', 99)
 
-    r = make_response('', '999') # Illegal, but acceptable three digit code
+    r = text_response('', '999') # Illegal, but acceptable three digit code
     assert r.status_code == 999
 
     with pytest.raises(ValueError):
@@ -45,20 +47,15 @@ def test_basic_response():
 
     assert r.status_code == 999
 
-    r = make_response('', [('Custom-Header', 'custom-value')])
-    assert r.status_code == 200
-    assert 'Custom-Header' in r
 
     with pytest.raises(ValueError):
-        r = make_response(object())
+        r = text_response(object())
 
-    r0 = make_response('text')
-    r = make_response(r0, 200, [('Custom-Header', 'custom-value')])
+    r = text_response('text', 200, [('Custom-Header', 'custom-value')])
     assert r.status_code == 200
     assert 'Custom-Header' in r
 
-    r0 = make_response('text')
-    r = make_response(r0, '200', {'Custom-Header':'custom-value'})
+    r = text_response('text', '200', {'Custom-Header':'custom-value'})
     assert r.status_code == 200
     assert 'Custom-Header' in r
     assert r.get_header('Custom-Header') == 'custom-value'
@@ -70,7 +67,7 @@ def test_basic_response():
     assert r1.body == r.body
     assert repr(r1) == repr(r)
 
-    r = make_response('', 304)
+    r = text_response('', 304)
     assert r.status_code == 304
     assert 'Content-Type' not in dict(r.iter_headers())
 

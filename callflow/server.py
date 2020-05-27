@@ -153,7 +153,7 @@ class Server:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.serve(sockets=sockets))
 
-    async def serve(self, sockets=None):
+    async def serve(self, sockets=None, start_hooks=[], stop_hooks=[]):
         process_id = os.getpid()
 
         config = self.config
@@ -166,9 +166,15 @@ class Server:
         await logger.info(message, process_id)
 
         await self.startup(sockets=sockets)
+        if len(start_hooks) > 0:
+            for hook in start_hooks:
+                await hook()
         if self.should_exit:
             return
         await self.main_loop()
+        if len(stop_hooks) > 0:
+            for hook in stop_hooks:
+                await hook()
         await self.shutdown(sockets=sockets)
 
         await logger.info(

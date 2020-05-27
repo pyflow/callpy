@@ -2,12 +2,22 @@
 from functools import update_wrapper
 from datetime import datetime, timedelta, date
 import time
+import typing
+import os
 
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
 from .errors import HTTPError, default_errors
 from .request import parse_date
+from .types import Receive, Scope, Send
 from http.cookies import SimpleCookie
+from urllib.parse import quote, quote_plus
+from mimetypes import guess_type
+from callflow.concurrency import iterate_in_threadpool, run_until_first_complete
+
+
+import aiofiles
+from aiofiles.os import stat as aio_stat
 
 
 def http_date(value):
@@ -32,56 +42,17 @@ def html_quote(string):
                     .replace('\r', '&#13;').replace('\t', '&#9;')
 
 
-class RedirectResponse:
-    code = 301
 
-    def __init__(self, new_url):
-        self.new_url = new_url
-
-    def get_headers(self):
-        return [('Location', self.new_url), ('Content-Type', 'text/html')]
-
-    def get_body(self):
-        display_location = html_escape(self.new_url)
-        body = str((
-            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">\n'
-            '<title>Redirecting...</title>\n'
-            '<h1>Redirecting...</h1>\n'
-            '<p>You should be redirected automatically to target URL: '
-            '<a href="%s">%s</a>.  If not click the link.') % (html_escape(self.new_url), display_location))
-        return body
-
-def make_response(*args):
-    rv, status_or_headers, headers = args + (None,) * (3 - len(args))
-
-    if rv is None:
-        raise ValueError('View function did not return a response')
-
-    if isinstance(status_or_headers, (dict, list)):
-        headers, status_or_headers = status_or_headers, None
-
-    if isinstance(rv, (str, bytes, bytearray)):
-        rv = Response(rv, headers=headers,
-                                 status=status_or_headers)
-    elif isinstance(rv, HTTPError):
+def make_response(rv):
+    if isinstance(rv, HTTPError):
         rv = Response(to_bytes(rv.get_body()), headers=rv.get_headers(),
-                                 status=rv.code)
-    elif isinstance(rv, RedirectResponse):
-        rv = Response(to_bytes(rv.get_body()), headers=rv.get_headers(),
-                                 status=rv.code)
+                                 status_code=rv.code)
+        return rv
+    elif isinstance(rv, Response):
+        return rv
     else:
-        if not isinstance(rv, Response):
-            raise ValueError('View function returns must be Response or text, not %s'%(rv))
+        raise ValueError('View function returns must be Response or text, not %s'%(rv))
 
-        if status_or_headers is not None:
-            rv.status = status_or_headers
-
-        if headers:
-            headers = headers.items() if isinstance(headers, dict) else headers
-            for name, value in headers:
-                rv.add_header(name, value)
-
-    return rv
 
 def redirect(location, code=302):
     """Returns a response object (a WSGI application) that, if called,
@@ -92,9 +63,8 @@ def redirect(location, code=302):
       * location: the location the response should redirect to.
       * code: the redirect status code. defaults to 302.
     """
-    rv = RedirectResponse(location)
-    rv.code = code
-    return make_response(rv)
+    rv = RedirectResponse(location, status_code=code)
+    return rv
 
 def jsonify(*args, **kwargs):
     """Creates a `Response` with the JSON representation of
@@ -118,6 +88,16 @@ def abort(code, *args, **kwargs):
         raise LookupError('no exception for %r' % code)
     raise mapping[code](*args, **kwargs)
 
+def text(text, status=200, headers=None):
+    if not isinstance(text, (bytes, str, bytearray)):
+        raise ValueError('text must be byte,str,bytearray, but <{}> found'.format(type(text)))
+    rv = Response(text, status_code=status, headers=headers)
+    return rv
+
+def html(html, status=200, headers=None):
+    rv = Response(html, status_code=status, headers=headers, content_type="text/html")
+    return rv
+
 class Response(object):
     """ Storage class for a response body as well as headers and cookies.
         This class does support dict-like case-insensitive item-access to
@@ -136,7 +116,8 @@ class Response(object):
     """
 
     default_status = 200
-    default_content_type = 'text/plain; charset=UTF-8'
+    default_content_type = 'text/plain'
+    charset = "UTF-8"
 
     # Header blacklist for specific response codes
     # (rfc2616 section 10.2.3 and 10.3.5)
@@ -147,31 +128,47 @@ class Response(object):
                   'Content-Md5', 'Last-Modified'))
     }
 
-    def __init__(self, body='', status=None, headers=None, **more_headers):
+    def __init__(self, body="", status_code=None, headers=None, **more_headers):
         self._cookies = None
         self._headers = HeaderDict()
-        self.status = status or self.default_status
+        self.status_code = status_code or self.default_status
         self.body = body
+        self.init_headers(headers, more_headers)
+
+    def init_headers(self, headers: typing.Mapping[str, str] = None, more_headers = None) -> None:
+        _headers = HeaderDict()
         if headers:
             if isinstance(headers, dict):
                 headers = headers.items()
             for name, value in headers:
-                self.add_header(name, value)
+                _headers.append(name, value)
         if more_headers:
             for name, value in more_headers.items():
-                self.add_header(name, value)
+                _headers.append(name, value)
 
-    def init_with(self, rv, status):
-        ret = rv
-        self.status = status
-        return ret
+        populate_content_length = "content-length" not in self._headers
+        populate_content_type = "content-type" not in self._headers
+
+        body = getattr(self, "body", "")
+        if body and populate_content_length:
+            content_length = str(len(body))
+            _headers.append("content-length", content_length.encode("latin-1"))
+
+        content_type = self.default_content_type
+        if content_type is not None and populate_content_type:
+            if content_type.startswith("text/"):
+                content_type += "; charset=" + self.charset
+            _headers.append("content-type", content_type.encode("latin-1"))
+
+        self._headers = _headers
+
 
     def copy(self, cls=None):
         """ Returns a copy of self. """
         cls = cls or Response
         assert issubclass(cls,Response)
         copy = cls()
-        copy.status = self.status
+        copy.status_code = self.status_code
         copy._headers = HeaderDict(self._headers.allitems())
         if self._cookies:
             copy._cookies = SimpleCookie()
@@ -357,3 +354,153 @@ class Response(object):
         else:
             body = to_bytes(self.body)
         await send({"type": "http.response.body", "body":body, "more_body": False})
+
+
+class RedirectResponse(Response):
+    code = 301
+
+    def __init__(self, new_url, status_code: int=302, headers: dict = None):
+        self.new_url = new_url
+        super().__init__(
+            body=self.get_body(), status_code=status_code, headers=self.get_headers()
+        )
+
+
+    def get_headers(self):
+        return [('Location', quote_plus(str(self.new_url), safe=":/%#?&=@[]!$&'()*+,;")),
+                ('Content-Type', 'text/html')]
+
+    def get_body(self):
+        display_location = html_escape(self.new_url)
+        body = str((
+            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">\n'
+            '<title>Redirecting...</title>\n'
+            '<h1>Redirecting...</h1>\n'
+            '<p>You should be redirected automatically to target URL: '
+            '<a href="%s">%s</a>.  If not click the link.') % (html_escape(self.new_url), display_location))
+        return body
+
+class StreamingResponse(Response):
+    def __init__(
+        self,
+        body: typing.Any,
+        status_code: int = 200,
+        headers: dict = None
+    ) -> None:
+        if inspect.isasyncgen(body):
+            self.body_iterator = body
+        else:
+            self.body_iterator = iterate_in_threadpool(body)
+        self.status_code = status_code
+        self.init_headers(headers)
+
+    async def listen_for_disconnect(self, receive: Receive) -> None:
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                break
+
+    async def stream_response(self, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": self.status_code,
+                "headers": self.raw_headers,
+            }
+        )
+        async for chunk in self.body_iterator:
+            if not isinstance(chunk, bytes):
+                chunk = chunk.encode(self.charset)
+            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await run_until_first_complete(
+            (self.stream_response, {"send": send}),
+            (self.listen_for_disconnect, {"receive": receive}),
+        )
+
+
+
+class FileResponse(Response):
+    chunk_size = 4096
+
+    def __init__(
+        self,
+        path: str,
+        status_code: int = 200,
+        headers: dict = None,
+        filename: str = None,
+        stat_result: os.stat_result = None,
+        method: str = None,
+    ) -> None:
+        assert aiofiles is not None, "'aiofiles' must be installed to use FileResponse"
+        self.path = path
+        self.status_code = status_code
+        self.filename = filename
+        self.send_header_only = method is not None and method.upper() == "HEAD"
+        more_headers = {}
+        if 'content-type' not in headers:
+            content_type = guess_type(filename or path)[0] or "text/plain"
+            more_headers['content_type'] = content_type
+
+        self.init_headers(headers, more_headers)
+
+        if self.filename is not None:
+            content_disposition_filename = quote(self.filename)
+            if content_disposition_filename != self.filename:
+                content_disposition = "attachment; filename*=utf-8''{}".format(
+                    content_disposition_filename
+                )
+            else:
+                content_disposition = 'attachment; filename="{}"'.format(self.filename)
+            self.headers.setdefault("content-disposition", content_disposition)
+        self.stat_result = stat_result
+        if stat_result is not None:
+            self.set_stat_headers(stat_result)
+
+    def set_stat_headers(self, stat_result: os.stat_result) -> None:
+        content_length = str(stat_result.st_size)
+        last_modified = formatdate(stat_result.st_mtime, usegmt=True)
+        etag_base = str(stat_result.st_mtime) + "-" + str(stat_result.st_size)
+        etag = hashlib.md5(etag_base.encode()).hexdigest()
+
+        self.headers.setdefault("content-length", content_length)
+        self.headers.setdefault("last-modified", last_modified)
+        self.headers.setdefault("etag", etag)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self.stat_result is None:
+            try:
+                stat_result = await aio_stat(self.path)
+                self.set_stat_headers(stat_result)
+            except FileNotFoundError:
+                raise RuntimeError(f"File at path {self.path} does not exist.")
+            else:
+                mode = stat_result.st_mode
+                if not stat.S_ISREG(mode):
+                    raise RuntimeError(f"File at path {self.path} is not a file.")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": self.status_code,
+                "headers": self.raw_headers,
+            }
+        )
+        if self.send_header_only:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        else:
+            async with aiofiles.open(self.path, mode="rb") as file:
+                more_body = True
+                while more_body:
+                    chunk = await file.read(self.chunk_size)
+                    more_body = len(chunk) == self.chunk_size
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": chunk,
+                            "more_body": more_body,
+                        }
+                    )
+

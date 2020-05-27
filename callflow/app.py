@@ -37,6 +37,11 @@ class CallFlow(object):
 
         self.name = name or 'main'
 
+        self.before_start_hooks = []
+        self.after_start_hooks = []
+        self.before_stop_hooks = []
+        self.after_stop_hooks = []
+
         #: A dictionary of all view functions registered.  The keys will
         #: be function names which are also used to generate URLs and
         #: the values are the function objects themselves.
@@ -94,7 +99,16 @@ class CallFlow(object):
             self.debug = bool(debug)
         self.server = Server(self, host=host, port=port)
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.server.serve())
+        loop.run_until_complete(self.start_serve())
+
+    async def start_serve(self):
+        if len(self.before_start_hooks) > 0:
+            for hook in self.before_start_hooks:
+                await hook()
+        await self.server.serve(start_hooks=self.after_start_hooks, stop_hooks=self.before_stop_hooks)
+        if len(self.after_stop_hooks) > 0:
+            for hook in self.after_stop_hooks:
+                await hook()
 
     def register_blueprint(self, blueprint, **options):
         """Registers a blueprint on the application.
@@ -254,6 +268,22 @@ class CallFlow(object):
             'It is currently not possible to register a 500 internal ' \
             'server error on a per-blueprint level.'
         self.error_handler_spec.setdefault(key, {})[code] = f
+
+    def before_start(self, hook):
+        self.before_start_hooks.append(hook)
+        return hook
+
+    def after_start(self, hook):
+        self.after_start_hooks.append(hook)
+        return hook
+
+    def before_stop(self, hook):
+        self.before_stop_hooks.append(hook)
+        return hook
+
+    def after_stop(self, hook):
+        self.after_stop_hooks.append(hook)
+        return hook
 
     def before_request(self, f):
         """Registers a function to run before each request."""
