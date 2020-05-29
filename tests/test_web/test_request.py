@@ -123,9 +123,13 @@ async def test_request_form():
     scope['headers'].append([b'content_type', b'application/x-www-form-urlencoded'])
     req = Request(scope, receive=form_data_receive)
     form_data = await req.form()
+    form_data2 = await req.form()
     assert len(form_data) == 2
     assert form_data['hello'] == 'world'
     assert form_data['code'] == '200'
+    assert len(form_data2) == 2
+    assert form_data2['hello'] == 'world'
+    assert form_data2['code'] == '200'
 
 @pytest.mark.asyncio
 async def test_request_json():
