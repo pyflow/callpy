@@ -183,8 +183,8 @@ class FormParser:
                 parser.feed(chunk)
             else:
                 parser.feed(b"")
-            items = parser.gets()
 
+        items = parser.gets()
         return FormData(items)
 
 class FormDataPart:

@@ -31,6 +31,16 @@ scope1 = {'client': ('172.29.0.10', 34784),
  'server': ('172.28.0.10', 8080),
  'type': 'http'}
 
+async def form_data_receive():
+    return {'type':'http.request',
+            'body': b'hello=world&code=200',
+            'more_body': False}
+
+async def json_data_receive():
+    return {'type':'http.request',
+            'body': b'{"hello":"world", "code":200}',
+            'more_body': False}
+
 def test_content_type():
     r = parse_content_type('text/plain')
     assert r == ('text/plain', {})
@@ -106,6 +116,26 @@ def test_basic_request2():
     scope = dict(copy.deepcopy(scope1))
     req = Request(scope, None)
     assert req.host == 'test.callflow.org'
+
+@pytest.mark.asyncio
+async def test_request_form():
+    scope = dict(copy.deepcopy(scope1))
+    scope['headers'].append([b'content_type', b'application/x-www-form-urlencoded'])
+    req = Request(scope, receive=form_data_receive)
+    form_data = await req.form()
+    assert len(form_data) == 2
+    assert form_data['hello'] == 'world'
+    assert form_data['code'] == '200'
+
+@pytest.mark.asyncio
+async def test_request_json():
+    scope = dict(copy.deepcopy(scope1))
+    scope['headers'].append([b'content_type', b'application/json'])
+    req = Request(scope, receive=json_data_receive)
+    json_data = await req.json()
+    assert len(json_data) == 2
+    assert json_data['hello'] == 'world'
+    assert json_data['code'] == 200
 
 def test_basic_error():
     scope = dict(copy.deepcopy(scope1))
