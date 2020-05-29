@@ -122,9 +122,6 @@ class Request(object):
             self.scope['callflow.request'] = self
 
     def __repr__(self):
-        # make sure the __repr__ even works if the request was created
-        # from an invalid WSGI environment.  If we display the request
-        # in a debug session we don't want the repr to blow up.
         args = []
         try:
             args.append("'%s'" % to_unicode(self.url, self.url_charset))
@@ -310,8 +307,7 @@ class Request(object):
     @cached_property
     def path(self):
         """Requested path as unicode.  This works a bit like the regular path
-        info in the WSGI environment but will always include a leading slash,
-        even if the URL root is accessed.
+        info but will always include a leading slash, even if the URL root is accessed.
         """
         return '/' + self.scope.get('path', '').lstrip('/')
 

@@ -7,7 +7,7 @@ class RouteSyntaxError(Exception):
 
 class Router(object):
     """ A Router is an ordered collection of route->endpoint pairs. It is used to
-        efficiently match WSGI requests against a number of routes and return
+        efficiently match requests against a number of routes and return
         the first endpoint that satisfies the request. The endpoint may be anything,
         usually a string, ID or callable object. A route consists of a path-rule
         and a HTTP method.

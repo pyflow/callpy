@@ -19,7 +19,7 @@ from basepy.asynclog import logger
 
 
 class CallFlow(object):
-    """The callflow object implements a WSGI application and acts as the central
+    """The callflow object implements a ASGI application and acts as the central
     object.  Once it is created it will act as a central registry for
     the view functions, the URL rules,  and more.
 
@@ -404,7 +404,7 @@ class CallFlow(object):
 
     async def process_response(self, request, response):
         """Can be overridden in order to modify the response object
-        before it's sent to the WSGI server.  By default this will
+        before it's sent to the ASGI server.  By default this will
         call all the `after_request` decorated functions.
 
         Args:

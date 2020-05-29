@@ -55,7 +55,7 @@ def make_response(rv):
 
 
 def redirect(location, code=302):
-    """Returns a response object (a WSGI application) that, if called,
+    """Returns a response object that, if called,
     redirects the client to the target location.  Supported codes are 301,
     302, 303, 305, and 307.
     Args:
@@ -247,7 +247,6 @@ class Response(object):
 
     @property
     def headerlist(self):
-        """ WSGI conform list of (header, value) tuples. """
         out = []
         headers = list(self._headers.allitems())
         if 'Content-Type' not in self._headers:
