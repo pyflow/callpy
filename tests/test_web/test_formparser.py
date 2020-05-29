@@ -1,5 +1,5 @@
 
-from callflow.web.formparsers import QueryStringParser, MultiPartParser
+from callflow.web.formparsers import QueryStringParser, MultiPartParser, FormParser
 import pytest
 
 def test_query_strint_parser():
@@ -10,6 +10,20 @@ def test_query_strint_parser():
     assert len(msgs) == 2
     assert msgs[0] == ('a', 'b')
     assert msgs[1] == ('b', 'c')
+
+async def form_data_stream():
+    yield b'a=b&b=c'
+    yield b''
+    return
+
+@pytest.mark.asyncio
+async def test_query_form_parser():
+    p = FormParser(None, form_data_stream())
+    msgs = await p.parse()
+    assert len(msgs) == 2
+    assert msgs['a'] == 'b'
+    assert msgs['b'] == 'c'
+
 
 simple_field_form = b'''------WebKitFormBoundaryTkr3kCBQlBe1nrhc\r
 Content-Disposition: form-data; name="field"\r
