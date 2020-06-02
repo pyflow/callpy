@@ -318,12 +318,14 @@ class Request(object):
             called. This script path is returned with leading and tailing
             slashes. """
         script_name = self.scope.get('root_path', '').strip('/')
-        return '/' + script_name + '/' if script_name else '/'
+        return '/' + script_name + '/' if script_name else ''
 
     @property
     def full_path(self):
         """Requested path as unicode, including the query string."""
-        return urljoin(self.script_name, self.path.lstrip('/'))
+        root_path = self.scope.get('root_path', '')
+        path = self.scope.get('path', '')
+        return '{}{}'.format(root_path, path)
 
     @cached_property
     def script_root(self):

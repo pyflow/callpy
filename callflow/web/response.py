@@ -50,8 +50,10 @@ def make_response(rv):
         return rv
     elif isinstance(rv, Response):
         return rv
+    elif isinstance(rv, (bytes, str)):
+        return Response(rv)
     else:
-        raise ValueError('View function returns must be Response or text, not %s'%(rv))
+        raise ValueError('View function returns must be Response or HTTPError, not %s'%(rv))
 
 
 def redirect(location, code=302):

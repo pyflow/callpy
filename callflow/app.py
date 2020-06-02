@@ -372,7 +372,7 @@ class CallFlow(object):
         """
         try:
             req = request
-            endpoint, view_args = self.router.match(to_unicode(req.environ['PATH_INFO']))
+            endpoint, view_args = self.router.match(req.full_path)
             req.endpoint, req.view_args = endpoint, view_args
             rv = await self.preprocess_request(req)
             if rv is None:
@@ -426,7 +426,7 @@ class CallFlow(object):
             response = await handler(request, response)
         return response
 
-    async def do_teardown_request(self, request, exc=None):
+    async def do_teardown_request(self, request, response, exc=None):
         """Called after the actual request dispatching and will
         call every as `teardown_request` decorated function.
         """
@@ -437,7 +437,7 @@ class CallFlow(object):
         if bp is not None and bp in self.teardown_request_funcs:
             funcs = chain(funcs, self.teardown_request_funcs[bp])
         for func in funcs:
-            rv = await func(request, exc)
+            rv = await func(request, response, exc)
 
     async def __call__(self, scope, receive, send):
         scope['app'] = self
