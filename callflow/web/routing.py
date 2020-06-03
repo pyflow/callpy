@@ -48,7 +48,7 @@ class Router(object):
             if prefix:
                 yield prefix, None, None
             if g[1] is None:
-                converter, variable = None, g[0]
+                converter, variable = None, g[0]  # pragma: no cover
             else:
                 converter, variable = g[0], g[1]
             converter = converter[:-1] if converter else 'string'
@@ -84,7 +84,7 @@ class Router(object):
         try:
             re_pattern = re.compile('^(%s)$' % pattern)
             re_match = re_pattern.match
-        except re.error as _e:
+        except re.error as _e: # pragma: no cover
             raise RouteSyntaxError("Could not add Route: %s (%s)" %
                                    (rule, _e))
 
@@ -121,7 +121,7 @@ class Router(object):
             for name, wildcard_filter in filters:
                 try:
                     url_args[name] = wildcard_filter(url_args[name])
-                except ValueError:
+                except ValueError: # pragma: no cover
                     raise BadRequest('Path has wrong format.')
         for k, v in defaults.items():
             if k not in url_args:
