@@ -13,7 +13,7 @@ import typing
 from collections.abc import Mapping
 import asyncio
 
-from .datastructures import URL, FormData, Headers, QueryParams, State
+from .datastructures import URL, FormData, Headers, QueryParams
 from .types import Message, Receive, Scope, Send
 from .errors import HTTPError, BadRequest
 from .utils import cached_property
