@@ -5,6 +5,7 @@ from callflow.app import CallFlow
 from callflow.web import Blueprint, response
 import copy
 import traceback
+import asyncio
 
 
 scope1 = {'client': ('172.29.0.10', 34784),
@@ -304,4 +305,61 @@ async def test_blueprint():
     send_list.clear()
     assert ret['body'] == b'bar2'
 
+class FakeServer:
+    def __init__(self, app, **kwargs):
+        self.app = app
+        self.wait_seconds = 2
+        self.start_hooks = []
+        self.stop_hooks = []
 
+    async def serve(self, sockets=None, start_hooks=[], stop_hooks=[]):
+        self.start_hooks = start_hooks
+        self.stop_hooks = stop_hooks
+        for hook in self.start_hooks:
+            await hook()
+        await asyncio.sleep(self.wait_seconds)
+        for hook in self.stop_hooks:
+            await hook()
+
+@pytest.mark.asyncio
+async def test_hooks():
+    app = CallFlow()
+
+    before_start_runned = False
+    after_start_runned = False
+    before_stop_runned = False
+    after_stop_runned = False
+
+    @app.before_start
+    async def before_start_function():
+        nonlocal before_start_runned
+        before_start_runned = True
+
+    with pytest.raises(Exception):
+        @app.before_start
+        def before_start_function2():
+            pass
+
+    @app.after_start
+    async def after_start_function():
+        nonlocal after_start_runned
+        after_start_runned = True
+
+    @app.before_stop
+    async def before_stop_function():
+        nonlocal before_stop_runned
+        before_stop_runned = True
+
+    @app.after_stop
+    async def after_stop_function():
+        nonlocal after_stop_runned
+        after_stop_runned = True
+
+    app.server = FakeServer(app)
+
+    await app.start_serve()
+
+    assert before_start_runned
+    assert after_start_runned
+    assert before_stop_runned
+    assert after_stop_runned

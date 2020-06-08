@@ -269,19 +269,27 @@ class CallFlow(object):
             'server error on a per-blueprint level.'
         self.error_handler_spec.setdefault(key, {})[code] = f
 
+    def _check_hook(self, hook):
+        if not asyncio.iscoroutinefunction(hook):
+            raise Exception('before/after hooks must be coroutine functions.')
+
     def before_start(self, hook):
+        self._check_hook(hook)
         self.before_start_hooks.append(hook)
         return hook
 
     def after_start(self, hook):
+        self._check_hook(hook)
         self.after_start_hooks.append(hook)
         return hook
 
     def before_stop(self, hook):
+        self._check_hook(hook)
         self.before_stop_hooks.append(hook)
         return hook
 
     def after_stop(self, hook):
+        self._check_hook(hook)
         self.after_stop_hooks.append(hook)
         return hook
 
