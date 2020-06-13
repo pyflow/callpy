@@ -13,6 +13,7 @@ from .web.errors import HTTPError, InternalServerError, MethodNotAllowed, BadReq
 
 from .web.request import Request
 from .web.response import Response, make_response
+from .web.handlers import StaticHandler
 from .web.utils import reraise, to_bytes, to_unicode
 from .server import Server
 from basepy.asynclog import logger
@@ -30,7 +31,6 @@ class CallFlow(object):
         app = CallFlow()
 
     """
-
 
     def __init__(self, name=''):
         self.config = {}
@@ -208,6 +208,17 @@ class CallFlow(object):
             self.add_url_rule(rule, endpoint, f, methods, **options)
             return f
         return decorator
+
+    def static(self, rule, directory):
+        realrule1 = '{}/'.format(rule.rstrip('/'))
+        realrule2 = '{}{}'.format(realrule1, '<path:target>')
+
+        h = StaticHandler(directory)
+        endpoint = 'static_{}'.format(rule.strip('/').replace('/', '_'))
+
+        self.add_url_rule(realrule1, endpoint, h, ['GET', 'PUT', 'POST', 'HEAD', 'DELETE'])
+        self.add_url_rule(realrule2, endpoint, h, ['GET', 'PUT', 'POST', 'HEAD', 'DELETE'])
+
 
     def endpoint(self, endpoint):
         """A decorator to register a function as an endpoint.

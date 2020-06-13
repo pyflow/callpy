@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 from functools import update_wrapper
 from datetime import datetime, timedelta, date
+from email.utils import formatdate
+import hashlib
 import time
 import typing
 import os
+import inspect
 
 from .utils import json, to_bytes, to_unicode
 from .datastructures import HeaderProperty, HeaderDict
 from .errors import HTTPError, default_errors
-from .request import parse_date
+from .request import parse_date, Request
 from .types import Receive, Scope, Send
 from http.cookies import SimpleCookie
 from urllib.parse import quote, quote_plus
@@ -148,8 +151,8 @@ class Response(object):
             for name, value in more_headers.items():
                 _headers.append(name, value)
 
-        populate_content_length = "content-length" not in self._headers
-        populate_content_type = "content-type" not in self._headers
+        populate_content_length = "content-length" not in _headers
+        populate_content_type = "content-type" not in _headers
 
         body = getattr(self, "body", "")
         if body and populate_content_length:
@@ -347,6 +350,10 @@ class Response(object):
             out += '%s: %s\n' % (name.title(), value.strip())
         return out
 
+    def raw_headers(self):
+        headers = list(map(lambda x: [to_bytes(x[0]), to_bytes(x[1])], self.headerlist))
+        return  headers
+
     async def __call__(self, send):
         headers = list(map(lambda x: [to_bytes(x[0]), to_bytes(x[1])], self.headerlist))
         await send({"type": "http.response.start", "status": self.status_code, "headers": headers})
@@ -384,6 +391,7 @@ class RedirectResponse(Response):
 class StreamingResponse(Response):
     def __init__(
         self,
+        request: Request,
         body: typing.Any,
         status_code: int = 200,
         headers: dict = None
@@ -392,12 +400,16 @@ class StreamingResponse(Response):
             self.body_iterator = body
         else:
             self.body_iterator = iterate_in_threadpool(body)
-        self.status_code = status_code
-        self.init_headers(headers)
 
-    async def listen_for_disconnect(self, receive: Receive) -> None:
+        self.status_code = status_code
+        super().__init__(
+            body='', status_code=status_code, headers=headers
+        )
+        self.request = request
+
+    async def listen_for_disconnect(self) -> None:
         while True:
-            message = await receive()
+            message = await self.request._receive()
             if message["type"] == "http.disconnect":
                 break
 
@@ -406,7 +418,7 @@ class StreamingResponse(Response):
             {
                 "type": "http.response.start",
                 "status": self.status_code,
-                "headers": self.raw_headers,
+                "headers": self.raw_headers(),
             }
         )
         async for chunk in self.body_iterator:
@@ -416,10 +428,10 @@ class StreamingResponse(Response):
 
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def __call__(self, send: Send) -> None:
         await run_until_first_complete(
             (self.stream_response, {"send": send}),
-            (self.listen_for_disconnect, {"receive": receive}),
+            (self.listen_for_disconnect),
         )
 
 
@@ -431,7 +443,7 @@ class FileResponse(Response):
         self,
         path: str,
         status_code: int = 200,
-        headers: dict = None,
+        headers: dict = {},
         filename: str = None,
         stat_result: os.stat_result = None,
         method: str = None,
@@ -446,7 +458,9 @@ class FileResponse(Response):
             content_type = guess_type(filename or path)[0] or "text/plain"
             more_headers['content_type'] = content_type
 
-        self.init_headers(headers, more_headers)
+        super().__init__(
+            body='', status_code=status_code, headers=headers, **more_headers
+        )
 
         if self.filename is not None:
             content_disposition_filename = quote(self.filename)
@@ -471,7 +485,7 @@ class FileResponse(Response):
         self.headers.setdefault("last-modified", last_modified)
         self.headers.setdefault("etag", etag)
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def __call__(self, send: Send) -> None:
         if self.stat_result is None:
             try:
                 stat_result = await aio_stat(self.path)
@@ -486,7 +500,7 @@ class FileResponse(Response):
             {
                 "type": "http.response.start",
                 "status": self.status_code,
-                "headers": self.raw_headers,
+                "headers": self.raw_headers(),
             }
         )
         if self.send_header_only:
@@ -504,4 +518,3 @@ class FileResponse(Response):
                             "more_body": more_body,
                         }
                     )
-
