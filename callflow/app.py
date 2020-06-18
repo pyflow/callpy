@@ -163,6 +163,9 @@ class CallFlow(object):
         if endpoint is None:
             endpoint = view_func.__name__
 
+        if not isinstance(endpoint, str):
+            raise Exception('endpoint must be string, found: {}'.format(type(endpoint)))
+
         # if the methods are not given and the view_func object knows its
         # methods we can use that instead.  If neither exists, we go with
         # a tuple of only `GET` as default.
