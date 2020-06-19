@@ -17,6 +17,7 @@ from .web.handlers import StaticHandler
 from .web.utils import reraise, to_bytes, to_unicode
 from .server import Server
 from basepy.asynclog import logger
+from .supervisor import Supervisor
 
 
 class CallFlow(object):
@@ -97,7 +98,13 @@ class CallFlow(object):
             port = 3000
         if debug is not None:
             self.debug = bool(debug)
-        self.server = Server(self, host=host, port=port)
+        workers = options.get('workers', 1)
+        daemon = options.get('daemon', False)
+        self.server = Server(self, host=host, port=port, **options)
+        sv = Supervisor(self.name, workers=workers, daemon=daemon, target=self._serve_forever)
+        sv.run()
+
+    def _serve_forever(self):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.start_serve())
 
@@ -162,9 +169,6 @@ class CallFlow(object):
         """
         if endpoint is None:
             endpoint = view_func.__name__
-
-        if not isinstance(endpoint, str):
-            raise Exception('endpoint must be string, found: {}'.format(type(endpoint)))
 
         # if the methods are not given and the view_func object knows its
         # methods we can use that instead.  If neither exists, we go with

@@ -12,21 +12,10 @@ import fcntl
 import random
 import resource
 import tempfile
-import argparse
 import copy
 
 from basepy.log import logger
-
-try:
-    from setproctitle import setproctitle
-
-    def _setproctitle(title):
-        setproctitle("callflow: %s" % title)
-except ImportError:
-
-    def _setproctitle(title):
-        return
-
+from setproctitle import setproctitle
 
 MAXFD = 1024
 
@@ -261,43 +250,6 @@ class HaltServer(Exception):
     def __str__(self):
         return "<HaltServer %r %d>" % (self.reason, self.exit_status)
 
-def supervisor_start(prog, target, **kwargs):
-    version = kwargs.get('version', '')
-    parser = argparse.ArgumentParser(prog=prog, description="{} - {}".format(prog, version))
-    parser.add_argument('-d', '--daemon', default=False, type=bool, help="Run in daemon mode [default: False].")
-    parser.add_argument('-w', '--workers', default=1, type=int, help="Workers process number [default: 1].")
-    parser.add_argument('-b', '--bind', nargs='+',
-        help="Host and port to listen, like tcp://127.0.0.1:1234, udp://127.0.0.1:1234")
-    parser.add_argument('-p', '--pid', help="Process pid file path.")
-    parser.add_argument('--pythonpath', help="Add additonal python path.")
-    parser.add_argument('--chdir', help="Chdir to specified directory before apps loading.")
-    args = vars(parser.parse_args())
-
-    for k, v in kwargs.items():
-        if k in args and args[k] in (None, False):
-            args[k] = v
-
-    if args["pythonpath"]:
-        paths = args['pythonpath'].split(',')
-        for path in reversed(paths):
-            if os.path.exists(path) and os.path.isabs(path):
-                sys.path.insert(0, path)
-    if args['chdir']:
-        os.chdir(args['chdir'])
-
-    if args['daemon']:
-        prevent_core_dump()
-        daemonize()
-
-    runner = Supervisor(
-        prog,
-        daemon=args['daemon'],
-        num_workers=int(args['workers']),
-        bind=args['bind'],
-        pid=args['pid'],
-        target=target)
-    runner.run()
-
 
 class Worker(object):
     SIGNALS = [
@@ -305,21 +257,19 @@ class Worker(object):
         "ABRT HUP QUIT INT TERM USR1 USR2 WINCH CHLD".split()
     ]
 
-    def __init__(self, age, ppid, sockets, target, log):
+    def __init__(self, ppid, target, log):
         """This is called pre-fork so it shouldn't do anything to the
         current process. If there's a need to make process wide
         changes you'll want to do that in ``self.init_process()``.
         """
-        self.age = age
         self.ppid = ppid
-        self.sockets = sockets
         self.target = target
         self.booted = False
         self.alive = True
         self.log = log
 
     def __str__(self):
-        return "<Worker %s>" % self.pid
+        return "<Process %s>" % self.pid
 
     @property
     def pid(self):
@@ -333,14 +283,7 @@ class Worker(object):
             target = self.target
 
         if callable(target):
-            if self.sockets:
-                target(
-                    self.sockets[0],
-                    sockets=self.sockets[1:],
-                    index=self.age,
-                    ppid=self.ppid)
-            else:
-                target()
+            target()
         else:
             self.booted = False
             raise Exception('target function not available.')
@@ -348,9 +291,6 @@ class Worker(object):
     def init_process(self):
         # Reseed the random number generator
         seed()
-
-        # Prevent fd inherientence
-        [close_on_exec(s) for s in self.sockets]
 
         self.init_signals()
 
@@ -408,7 +348,6 @@ class Supervisor(object):
 
     START_CTX = {}
 
-    LISTENERS = []
     WORKERS = {}
     PIPE = []
 
@@ -427,15 +366,12 @@ class Supervisor(object):
     def __init__(self,
                  prog,
                  daemon=False,
-                 num_workers=1,
-                 bind=None,
+                 workers=1,
                  pid=None,
                  target=None):
         self.stop_timeout = 30
         self.prog = prog
-        self.addresses = [parse_address(addr)
-                          for addr in bind] if bind else []
-        self.num_workers = num_workers
+        self.num_workers = workers
         self.daemon = daemon
         self.pid = os.getpid()
         self.pidfile = None
@@ -448,9 +384,8 @@ class Supervisor(object):
         if hasattr(self.WORKER_CLASS, 'setup'):
             self.WORKER_CLASS.setup()
 
-        self.worker_age = 0
         self.reexec_pid = 0
-        self.master_name = "Master"
+        self.name = "Supervisor of {}".format(self.prog)
 
         self.log = logger
 
@@ -476,14 +411,11 @@ class Supervisor(object):
         """
         self.log.info("Starting %s", self.prog)
         self.init_signals()
-        if not self.LISTENERS:
-            for address in self.addresses:
-                addr_type = address[2]
 
     def init_signals(self):
         """\
-        Initialize master signal handling. Most of the signals
-        are queued. Child signals only wake up the master.
+        Initialize supervisor signal handling. Most of the signals
+        are queued. Child signals only wake up the supervisor.
         """
         # close old PIPE
         if self.PIPE:
@@ -505,9 +437,12 @@ class Supervisor(object):
             self.wakeup()
 
     def run(self):
-        """Main master loop."""
+        """Main supervisor loop."""
+        # if self.daemon:
+        #     prevent_core_dump()
+        #     daemonize()
         self.start()
-        _setproctitle("master [%s]" % self.proc_name)
+        setproctitle("supervisor of {} [{}]".format(self.prog, self.proc_name))
 
         self.manage_workers()
         while True:
@@ -558,7 +493,7 @@ class Supervisor(object):
         - Start the new worker processes with a new configuration
         - Gracefully shutdown the old worker processes
         """
-        self.log.info("Hang up: %s", self.master_name)
+        self.log.info("Hang up: %s", self.name)
         self.reload()
 
     def handle_quit(self):
@@ -604,8 +539,8 @@ class Supervisor(object):
     def handle_usr2(self):
         """\
         SIGUSR2 handling.
-        Creates a new master/worker set as a slave of the current
-        master without affecting old workers. Use this to do live
+        Creates a new supervisor/worker set as a slave of the current
+        supervisor without affecting old workers. Use this to do live
         deployment with the ability to backout a change.
         """
         self.reexec()
@@ -632,7 +567,7 @@ class Supervisor(object):
     def halt(self, reason=None, exit_status=0):
         """ halt arbiter """
         self.stop()
-        self.log.info("Shutting down: %s", self.master_name)
+        self.log.info("Shutting down: %s", self.name)
         if reason is not None:
             self.log.info("Reason: %s", reason)
         if self.pidfile is not None:
@@ -663,14 +598,6 @@ class Supervisor(object):
         """\
         Stop workers
         """
-        for l in self.LISTENERS:
-            try:
-                l.shutdown()
-                l.close()
-            except Exception:
-                pass
-
-        self.LISTENERS = []
         sig = signal.SIGTERM
         self.kill_workers(sig)
         limit = time.time() + self.stop_timeout
@@ -680,24 +607,17 @@ class Supervisor(object):
 
     def reexec(self):
         """\
-        Relaunch the master and workers.
+        Relaunch the supervisor and workers.
         """
         if self.pidfile is not None:
             self.pidfile.rename("%s.oldbin" % self.pidfile.fname)
 
         self.reexec_pid = os.fork()
         if self.reexec_pid != 0:
-            self.master_name = "Old Master"
+            self.name = "Old {}".format(self.name)
             return
 
-        fds = [l.fileno() for l in self.LISTENERS]
-        os.environ['CALLFLOW_SUPERVISOR_FD'] = ",".join([str(fd) for fd in fds])
-
         os.chdir(self.START_CTX['cwd'])
-
-        # close all file descriptors except bound sockets
-        os.closerange(3, fds[0])
-        os.closerange(fds[-1] + 1, get_maxfd())
 
         os.execvpe(self.START_CTX[0], self.START_CTX['args'], os.environ)
 
@@ -743,15 +663,12 @@ class Supervisor(object):
             self.spawn_workers()
 
         workers = self.WORKERS.items()
-        workers = sorted(workers, key=lambda w: w[1].age)
         while len(workers) > self.num_workers:
             (pid, _) = workers.pop(0)
             self.kill_worker(pid, signal.SIGQUIT)
 
     def spawn_worker(self):
-        self.worker_age += 1
-        worker = self.WORKER_CLASS(self.worker_age, self.pid, self.LISTENERS,
-                                   self.target, self.log)
+        worker = self.WORKER_CLASS(self.pid, self.target, self.log)
 
         pid = os.fork()
 
@@ -762,7 +679,7 @@ class Supervisor(object):
         # Process Child
         worker_pid = os.getpid()
         try:
-            _setproctitle("worker [%s]" % self.proc_name)
+            setproctitle("worker of {} [{}]".format(self.prog, self.proc_name))
             self.log.info("Booting worker with pid: %s" % (worker_pid))
             worker.init_process()
             sys.exit(0)
@@ -783,7 +700,7 @@ class Supervisor(object):
         Spawn new workers as needed.
 
         This is where a worker process leaves the main loop
-        of the master process.
+        of the supervisor process.
         """
 
         for i in range(self.num_workers - len(self.WORKERS.keys())):

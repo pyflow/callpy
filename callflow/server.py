@@ -13,9 +13,6 @@ from callflow.web.protocol import HttpToolsProtocol
 from basepy.asynclog import logger
 import uvloop
 
-logger.add('stdout')
-
-
 HANDLED_SIGNALS = (
     signal.SIGINT,  # Unix signal 2. Sent by Ctrl+C.
     signal.SIGTERM,  # Unix signal 15. Sent by `kill <pid>`.
@@ -47,6 +44,7 @@ class ServerConfig:
         ssl_ca_certs=None,
         ssl_ciphers="TLSv1",
         headers=None,
+        **kwargs
     ):
         self.host = host
         self.port = port
@@ -308,4 +306,3 @@ class Server:
             self.force_exit = True
         else:
             self.should_exit = True
-
