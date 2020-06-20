@@ -20,40 +20,6 @@ from setproctitle import setproctitle
 MAXFD = 1024
 
 
-def parse_address(netloc, default_port=8000):
-    addr_type = 'tcp'
-    if netloc.startswith("unix://"):
-        addr_type = 'unix'
-        return (netloc.split("unix://")[1], 0, addr_type)
-    elif netloc.startswith("tcp://"):
-        addr_type = 'tcp'
-        netloc = netloc.split("tcp://")[1]
-    elif netloc.startswith("udp://"):
-        addr_type = 'udp'
-        netloc = netloc.split("udp://")[1]
-
-    # get host
-    if '[' in netloc and ']' in netloc:
-        host = netloc.split(']')[0][1:].lower()
-    elif ':' in netloc:
-        host = netloc.split(':')[0].lower()
-    elif netloc == "":
-        host = "0.0.0.0"
-    else:
-        host = netloc.lower()
-
-    # get port
-    netloc = netloc.split(']')[-1]
-    if ":" in netloc:
-        port = netloc.split(':', 1)[1]
-        if not port.isdigit():
-            raise RuntimeError("%r is not a valid port number." % port)
-        port = int(port)
-    else:
-        port = default_port
-    return (host, port, addr_type)
-
-
 def get_maxfd():
     maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
     if maxfd == resource.RLIM_INFINITY:
@@ -254,7 +220,7 @@ class HaltServer(Exception):
 class Worker(object):
     SIGNALS = [
         getattr(signal, "SIG%s" % x) for x in
-        "ABRT HUP QUIT INT TERM USR1 USR2 WINCH CHLD".split()
+        "ABRT HUP QUIT USR1 USR2 WINCH CHLD".split()
     ]
 
     def __init__(self, ppid, target, log):
@@ -303,8 +269,6 @@ class Worker(object):
         [signal.signal(s, signal.SIG_DFL) for s in self.SIGNALS]
         # init new signaling
         signal.signal(signal.SIGQUIT, self.handle_quit)
-        signal.signal(signal.SIGTERM, self.handle_exit)
-        signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGWINCH, self.handle_winch)
         signal.signal(signal.SIGUSR1, self.handle_usr1)
         signal.signal(signal.SIGABRT, self.handle_abort)
@@ -321,9 +285,6 @@ class Worker(object):
         sys.exit(1)
 
     def handle_quit(self, sig, frame):
-        sys.exit(0)
-
-    def handle_exit(self, sig, frame):
         sys.exit(0)
 
     def handle_error(self, req, client, addr, exc):
@@ -369,7 +330,7 @@ class Supervisor(object):
                  workers=1,
                  pid=None,
                  target=None):
-        self.stop_timeout = 30
+        self.stop_timeout = 120
         self.prog = prog
         self.num_workers = workers
         self.daemon = daemon
@@ -438,9 +399,9 @@ class Supervisor(object):
 
     def run(self):
         """Main supervisor loop."""
-        # if self.daemon:
-        #     prevent_core_dump()
-        #     daemonize()
+        if self.daemon:
+            prevent_core_dump()
+            daemonize()
         self.start()
         setproctitle("supervisor of {} [{}]".format(self.prog, self.proc_name))
 

@@ -29,7 +29,6 @@ class ServerConfig:
         port=8000,
         loop="uvloop",
         debug=False,
-        workers=None,
         root_path="",
         limit_concurrency=None,
         limit_max_requests=None,
@@ -50,7 +49,6 @@ class ServerConfig:
         self.port = port
         self.loop = loop
         self.debug = debug
-        self.workers = workers or 1
         self.root_path = root_path
         self.limit_concurrency = limit_concurrency
         self.limit_max_requests = limit_max_requests

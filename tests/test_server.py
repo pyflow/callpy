@@ -35,7 +35,7 @@ def test_run_multiprocess():
         def install_signal_handlers(self):
             pass
 
-    server = CustomServer(app=App(), loop="asyncio", workers=2, limit_max_requests=1)
+    server = CustomServer(app=App(), loop="asyncio", limit_max_requests=1)
     thread = threading.Thread(target=server.run)
     thread.start()
     while not server.started:
@@ -56,7 +56,7 @@ def test_run_with_shutdown():
         def install_signal_handlers(self):
             pass
 
-    server = CustomServer(app=App(), loop="asyncio", workers=2, limit_max_requests=1)
+    server = CustomServer(app=App(), loop="asyncio", limit_max_requests=1)
     exc = True
 
     def safe_run():
