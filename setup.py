@@ -70,6 +70,7 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: Implementation :: CPython"
     ],
-    entry_points="""
-    """,
+    entry_points={
+        'console_scripts': ['callflow-manager=callflow.manager:run_manager']
+    }
 )
