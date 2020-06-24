@@ -130,9 +130,8 @@ class QueryStringParser():
             else:
                 pair = (unquote_plus(buffer[i:equal_pos].decode('latin-1')),
                     unquote_plus(buffer[equal_pos+1:sep_pos].decode('latin-1')))
-
             self.items.append(pair)
-            i += (sep_pos + 1)
+            i = (sep_pos + 1)
 
         if i > 0:
             self.buffer = self.buffer[i:]
