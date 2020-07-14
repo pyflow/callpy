@@ -149,7 +149,9 @@ class Server:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.serve(sockets=sockets))
 
-    async def serve(self, sockets=None, start_hooks=[], stop_hooks=[]):
+    async def serve(self, sockets=None, start_hooks=None, stop_hooks=None):
+        start_hooks = start_hooks or []
+        stop_hooks = stop_hooks or []
         process_id = os.getpid()
 
         config = self.config
