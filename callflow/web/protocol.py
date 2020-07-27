@@ -160,7 +160,7 @@ class WebSocketProtocol(websockets.WebSocketServerProtocol):
         except BaseException as exc:
             self.closed_event.set()
             msg = "Exception in ASGI application\n"
-            self.logger.error(msg, exc_info=exc)
+            await logger.error(msg, exc_info=exc)
             if not self.handshake_started_event.is_set():
                 self.send_500_response()
             else:
@@ -170,12 +170,12 @@ class WebSocketProtocol(websockets.WebSocketServerProtocol):
             self.closed_event.set()
             if not self.handshake_started_event.is_set():
                 msg = "ASGI callable returned without sending handshake."
-                self.logger.error(msg)
+                await logger.error(msg)
                 self.send_500_response()
                 self.transport.close()
             elif result is not None:
                 msg = "ASGI callable should return None, but returned '%s'."
-                self.logger.error(msg, result)
+                await logger.error(msg, result)
                 await self.handshake_completed_event.wait()
                 self.transport.close()
 
@@ -184,7 +184,7 @@ class WebSocketProtocol(websockets.WebSocketServerProtocol):
 
         if not self.handshake_started_event.is_set():
             if message_type == "websocket.accept":
-                self.logger.info(
+                await logger.info(
                     '%s - "WebSocket %s" [accepted]',
                     self.scope["client"],
                     self.scope["root_path"] + self.scope["path"],
@@ -194,7 +194,7 @@ class WebSocketProtocol(websockets.WebSocketServerProtocol):
                 self.handshake_started_event.set()
 
             elif message_type == "websocket.close":
-                self.logger.info(
+                await logger.info(
                     '%s - "WebSocket %s" 403',
                     self.scope["client"],
                     self.scope["root_path"] + self.scope["path"],
