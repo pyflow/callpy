@@ -45,7 +45,7 @@ requirements = [
 
 
 setup(
-    name="callflow",
+    name="callflow_core",
     version=get_version("callflow"),
     url="https://github.com/zeaphoo/callflow",
     license="MIT",
