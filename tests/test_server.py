@@ -21,7 +21,7 @@ def test_run():
     thread.start()
     while not server.started:
         time.sleep(0.01)
-    response = requests.get("http://127.0.0.1:8000")
+    response = requests.get("http://127.0.0.1:5000")
     assert response.status_code == 204
     thread.join()
 
@@ -40,7 +40,7 @@ def test_run_multiprocess():
     thread.start()
     while not server.started:
         time.sleep(0.01)
-    response = requests.get("http://127.0.0.1:8000")
+    response = requests.get("http://127.0.0.1:5000")
     assert response.status_code == 204
     thread.join()
 
