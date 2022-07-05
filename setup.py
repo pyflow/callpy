@@ -45,16 +45,16 @@ requirements = [
 
 
 setup(
-    name="callflow_core",
-    version=get_version("callflow"),
-    url="https://github.com/zeaphoo/callflow",
+    name="callpy",
+    version=get_version("callpy"),
+    url="https://github.com/pyflow/callpy",
     license="MIT",
     description="multi protocol, auto-cluster server framework.",
     long_description=get_long_description(),
     long_description_content_type="text/markdown",
     author="Wei Zhuo",
     author_email="zeaphoo@qq.com",
-    packages=get_packages("callflow"),
+    packages=get_packages("callpy"),
     install_requires=requirements,
     data_files=[],
     classifiers=[
@@ -71,6 +71,6 @@ setup(
         "Programming Language :: Python :: Implementation :: CPython"
     ],
     entry_points={
-        'console_scripts': ['callflow-manager=callflow.manager:run_manager']
+        'console_scripts': ['callpy-manager=callpy.manager:run_manager']
     }
 )

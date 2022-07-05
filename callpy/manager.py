@@ -19,7 +19,7 @@ from basepy.log import logger
 
 
 def run_manager():
-    parser = argparse.ArgumentParser(prog="callflow-manager")
+    parser = argparse.ArgumentParser(prog="callpy-manager")
     parser.add_argument("command", help="run from manage.init config", choices=["run", "list"])
     args = parser.parse_args()
     manager = ProcessManager()

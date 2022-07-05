@@ -1,13 +1,13 @@
 import pytest
 
-from callflow.web.request import parse_date
-from callflow.web.response import text as text_response
-from callflow.web.response import html as html_response
-from callflow.web.response import (
+from callpy.web.request import parse_date
+from callpy.web.response import text as text_response
+from callpy.web.response import html as html_response
+from callpy.web.response import (
     Response, make_response, redirect, jsonify,
     html_escape, html_quote, http_date)
-from callflow.web.datastructures import MultiDict
-from callflow.web.errors import BadRequest
+from callpy.web.datastructures import MultiDict
+from callpy.web.errors import BadRequest
 import json
 import copy
 import datetime

@@ -1,7 +1,7 @@
 import pytest
 
-from callflow.web.routing import Router
-from callflow.web.errors import BadRequest, NotFound, MethodNotAllowed
+from callpy.web.routing import Router
+from callpy.web.errors import BadRequest, NotFound, MethodNotAllowed
 
 def test_basic_routing():
     r = Router()

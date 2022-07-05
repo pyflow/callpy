@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from shlex import shlex
 from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit
 
-from callflow.concurrency import run_in_threadpool
+from callpy.concurrency import run_in_threadpool
 from .types import Scope
 
 def _hkey(s):

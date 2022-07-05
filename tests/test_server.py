@@ -3,7 +3,7 @@ import time
 import asyncio
 
 import requests
-from callflow.server import Server
+from callpy.server import Server
 
 
 def test_run():

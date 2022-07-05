@@ -1,5 +1,5 @@
 
-from callflow.web.formparsers import QueryStringParser, MultiPartParser, FormParser
+from callpy.web.formparsers import QueryStringParser, MultiPartParser, FormParser
 import pytest
 
 def test_query_strint_parser():

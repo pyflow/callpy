@@ -1,6 +1,6 @@
 import pytest
 
-from callflow.web.utils import ConfigDict, cached_property
+from callpy.web.utils import ConfigDict, cached_property
 import copy
 import traceback
 

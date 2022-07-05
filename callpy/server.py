@@ -9,7 +9,7 @@ import sys
 import time
 import typing
 from email.utils import formatdate
-from callflow.web.protocol import HttpToolsProtocol
+from callpy.web.protocol import HttpToolsProtocol
 from basepy.asynclog import logger
 import uvloop
 
@@ -93,7 +93,7 @@ class ServerConfig:
         self.encoded_headers = (
             encoded_headers
             if b"server" in dict(encoded_headers)
-            else [(b"server", b"callflow")] + encoded_headers
+            else [(b"server", b"callpy")] + encoded_headers
         )  # type: List[Tuple[bytes, bytes]]
 
         self.loaded = True

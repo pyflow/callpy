@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import pytest
 
-from callflow.app import CallFlow
-from callflow.web import Blueprint, response
+from callpy.app import CallFlow
+from callpy.web import Blueprint, response
 import copy
 import traceback
 import asyncio

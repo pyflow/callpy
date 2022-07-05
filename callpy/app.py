@@ -28,7 +28,7 @@ class CallFlow(object):
     Usually you create a `CallFlow` instance in your main module or
     in the `__init__.py` file of your package like this:
 
-        from callflow import CallFlow
+        from callpy import CallFlow
         app = CallFlow()
 
     """

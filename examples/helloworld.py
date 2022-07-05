@@ -1,4 +1,4 @@
-from callflow import CallFlow
+from callpy import CallFlow
 app = CallFlow('helloworld')
 
 @app.route('/')

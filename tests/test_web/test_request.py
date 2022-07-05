@@ -1,9 +1,9 @@
 import pytest
 
-from callflow.web.request import (Request, parse_auth, parse_content_type, parse_date, parse_range_header)
-from callflow.web.errors import BadRequest, NotFound, MethodNotAllowed
-from callflow.web.datastructures import MultiDict, FormsDict
-from callflow.web.utils import to_bytes, to_unicode
+from callpy.web.request import (Request, parse_auth, parse_content_type, parse_date, parse_range_header)
+from callpy.web.errors import BadRequest, NotFound, MethodNotAllowed
+from callpy.web.datastructures import MultiDict, FormsDict
+from callpy.web.utils import to_bytes, to_unicode
 from io import BytesIO
 import time
 import base64
