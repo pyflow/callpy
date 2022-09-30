@@ -404,6 +404,7 @@ class CallFlow(object):
             if rv is None:
                 rv = await self.view_functions[req.endpoint](req, **req.view_args)
         except Exception as e:
+            await logger.info(f'{req.endpoint}, {req.view_args}')
             await logger.info('%s'%(traceback.format_exc()))
             rv = await self.handle_user_exception(req, e)
             return make_response(rv)

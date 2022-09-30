@@ -670,7 +670,7 @@ class RequestResponseCycle:
                     self.scope["http_version"],
                     status_code,
                     status_code=status_code,
-                    scope=self.scope
+                    headers=self.scope["headers"]
                 )
 
             # Write response status line and headers
