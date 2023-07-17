@@ -11,7 +11,12 @@ import typing
 from email.utils import formatdate
 from callpy.web.protocol import HttpToolsProtocol
 from basepy.asynclog import logger
-import uvloop
+
+loop_name = 'asyncio'
+
+if sys.platform != 'win32':
+    import uvloop
+    loop_name = 'uvloop'
 
 HANDLED_SIGNALS = (
     signal.SIGINT,  # Unix signal 2. Sent by Ctrl+C.
@@ -27,7 +32,7 @@ class ServerConfig:
         self,
         host="127.0.0.1",
         port=5000,
-        loop="uvloop",
+        loop=loop_name,
         debug=False,
         root_path="",
         limit_concurrency=None,
@@ -192,12 +197,17 @@ class Server:
 
         loop = asyncio.get_event_loop()
 
+        reuse_port = True
+        if sys.platform == 'win32':
+            reuse_port = False
+
         if sockets is not None:
             # Explicitly passed a list of open sockets.
             self.servers = []
             for sock in sockets:
                 server = await loop.create_server(
-                    create_protocol, sock=sock, ssl=config.ssl_context, backlog=config.backlog
+                    create_protocol, sock=sock, ssl=config.ssl_context, backlog=config.backlog,
+                    reuse_port=reuse_port
                 )
                 self.servers.append(server)
         else:
@@ -209,7 +219,7 @@ class Server:
                     port=config.port,
                     ssl=config.ssl_context,
                     backlog=config.backlog,
-                    reuse_port=True
+                    reuse_port=reuse_port
                 )
             except OSError as exc:
                 await logger.error(exc)

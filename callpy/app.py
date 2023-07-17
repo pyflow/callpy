@@ -17,7 +17,11 @@ from .web.handlers import StaticHandler
 from .web.utils import reraise, to_bytes, to_unicode
 from .server import Server
 from basepy.asynclog import logger
-from .supervisor import Supervisor
+from functools import partial
+if sys.platform != 'win32':
+    from .supervisor import Supervisor
+else:
+    from .watcher import Watcher as Supervisor
 
 
 class CallFlow(object):
@@ -100,8 +104,8 @@ class CallFlow(object):
             self.debug = bool(debug)
         workers = options.get('workers', 1)
         daemon = options.get('daemon', False)
-        self.server = Server(self, host=host, port=port, **options)
         sv = Supervisor(self.name, workers=workers, daemon=daemon, target=self._serve_forever)
+        self.server = Server(self, host=host, port=port, **options)
         sv.run()
 
     def _serve_forever(self):

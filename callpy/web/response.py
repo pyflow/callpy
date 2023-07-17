@@ -21,6 +21,7 @@ from callpy.concurrency import iterate_in_threadpool, run_until_first_complete
 
 import aiofiles
 from aiofiles.os import stat as aio_stat
+import stat
 
 
 def http_date(value):

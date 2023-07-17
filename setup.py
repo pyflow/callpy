@@ -38,11 +38,13 @@ def get_packages(package):
 requirements = [
     "websockets>=8.*",
     "httptools>=0.1.*",
-    "uvloop>=0.14.0",
     "basepy>=0.3.1",
+    "aiofiles",
     "setproctitle"
 ]
 
+if sys.platform != 'win32':
+    requirements.append("uvloop>=0.14.0")
 
 setup(
     name="callpy",
@@ -68,6 +70,8 @@ setup(
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: Implementation :: CPython"
     ],
     entry_points={

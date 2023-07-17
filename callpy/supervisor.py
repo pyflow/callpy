@@ -9,23 +9,14 @@ import time
 import traceback
 import ctypes
 import fcntl
-import random
 import resource
+
+import random
 import tempfile
 import copy
 
 from basepy.log import logger
 from setproctitle import setproctitle
-
-MAXFD = 1024
-
-
-def get_maxfd():
-    maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
-    if maxfd == resource.RLIM_INFINITY:
-        maxfd = MAXFD
-    return maxfd
-
 
 def close_on_exec(fd):
     flags = fcntl.fcntl(fd, fcntl.F_GETFD)
@@ -203,9 +194,6 @@ class Pidfile(object):
             if e[0] == errno.ENOENT:
                 return
             raise
-
-STOP_SIGNAL = signal.SIGTERM
-RELOAD_SIGNAL = signal.SIGHUP
 
 
 class HaltServer(Exception):
