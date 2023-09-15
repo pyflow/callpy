@@ -155,7 +155,7 @@ class Response(object):
         populate_content_length = "content-length" not in _headers
         populate_content_type = "content-type" not in _headers
 
-        body = getattr(self, "body", "")
+        body = getattr(self, "body", "").encode(self.charset)
         if body and populate_content_length:
             content_length = str(len(body))
             _headers.append("content-length", content_length.encode("latin-1"))
