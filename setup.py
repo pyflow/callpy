@@ -36,8 +36,8 @@ def get_packages(package):
     ]
 
 requirements = [
-    "websockets>=8.*",
-    "httptools>=0.1.*",
+    "websockets>=9.0",
+    "httptools>=0.4.0",
     "basepy>=0.3.1",
     "aiofiles",
     "setproctitle"
