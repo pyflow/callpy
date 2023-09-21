@@ -1,9 +1,9 @@
-from callpy import CallFlow
+from callpy import CallPy
 from basepy.asynclog import logger
 
 logger.add('stdout')
 
-app = CallFlow('helloworld')
+app = CallPy('helloworld')
 
 @app.route('/')
 @app.route('/<foo>/bar')

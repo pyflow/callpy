@@ -12,7 +12,7 @@ import inspect
 import json
 
 scope1 = {'client': ('172.29.0.10', 34784),
- 'headers': [[b'host', b'test.callflow.org'],
+ 'headers': [[b'host', b'test.callpy.org'],
              [b'connection', b'close'],
              [b'user-agent',
               b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:60.0) Gecko'
@@ -81,11 +81,11 @@ def test_basic_request():
     assert req.path == '/bar'
     assert req.full_path == '/foo/bar'
     assert req.script_root == '/foo'
-    assert req.url == 'http://test.callflow.org/foo/bar?a=1&b=2'
-    assert req.base_url == 'http://test.callflow.org/foo/bar'
-    assert req.root_url == 'http://test.callflow.org/foo/'
-    assert req.host_url == 'http://test.callflow.org/'
-    assert req.host == 'test.callflow.org'
+    assert req.url == 'http://test.callpy.org/foo/bar?a=1&b=2'
+    assert req.base_url == 'http://test.callpy.org/foo/bar'
+    assert req.root_url == 'http://test.callpy.org/foo/'
+    assert req.host_url == 'http://test.callpy.org/'
+    assert req.host == 'test.callpy.org'
     assert req.blueprint == None
     assert req.mimetype == 'text/plain'
     assert req.mimetype_params == {'charset': 'utf-8'}
@@ -106,16 +106,16 @@ def test_basic_request():
 
 def test_basic_request2():
     scope = dict(copy.deepcopy(scope1))
-    scope['headers'].append([b'x_forwarded_host', b'test.callflow.org'])
+    scope['headers'].append([b'x_forwarded_host', b'test.callpy.org'])
     req = Request(scope, None)
-    assert req.host == 'test.callflow.org'
+    assert req.host == 'test.callpy.org'
     scope = dict(copy.deepcopy(scope1))
-    scope['headers'].append([b'x_forwarded_host', b'test.callflow.org, a.proxy.org'])
+    scope['headers'].append([b'x_forwarded_host', b'test.callpy.org, a.proxy.org'])
     req = Request(scope, None)
-    assert req.host == 'test.callflow.org'
+    assert req.host == 'test.callpy.org'
     scope = dict(copy.deepcopy(scope1))
     req = Request(scope, None)
-    assert req.host == 'test.callflow.org'
+    assert req.host == 'test.callpy.org'
 
 @pytest.mark.asyncio
 async def test_request_form():

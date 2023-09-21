@@ -257,7 +257,7 @@ class Response(object):
         headers = list(self._headers.allitems())
         if 'Content-Type' not in self._headers:
             headers.append(('Content-Type', self.default_content_type))
-        #headers.append(('Server', 'CallFlow %s'%(server_version)))
+        #headers.append(('Server', 'CallPy %s'%(server_version)))
         if self._status_code in self.bad_headers:
             bad_headers = self.bad_headers[self._status_code]
             headers = [h for h in headers if h[0] not in bad_headers]

@@ -1,6 +1,6 @@
-from callpy import CallFlow
+from callpy import CallPy
 
-app = CallFlow()
+app = CallPy()
 
 @app.route('/')
 async def hello(request):

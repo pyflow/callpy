@@ -119,7 +119,7 @@ class Request(object):
         self._stream_consumed = False
         self._is_disconnected = False
         if populate_request:
-            self.scope['callflow.request'] = self
+            self.scope['callpy.request'] = self
 
     def __repr__(self):
         args = []

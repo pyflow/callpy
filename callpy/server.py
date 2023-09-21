@@ -228,7 +228,7 @@ class Server:
             if port == 0:
                 port = server.sockets[0].getsockname()[1]
             protocol_name = "https" if config.ssl_context else "http"
-            message = "Callflow running on %s://%s:%d (Press CTRL+C to quit)"
+            message = "CallPy running on %s://%s:%d (Press CTRL+C to quit)"
             await logger.info(
                 message,
                 protocol_name,

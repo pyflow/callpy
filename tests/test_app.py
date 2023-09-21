@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 
-from callpy.app import CallFlow
+from callpy.app import CallPy
 from callpy.web import Blueprint, response
 import copy
 import traceback
@@ -9,7 +9,7 @@ import asyncio
 
 
 scope1 = {'client': ('172.29.0.10', 34784),
- 'headers': [[b'host', b'test.callflow.org'],
+ 'headers': [[b'host', b'test.callpy.org'],
              [b'connection', b'close'],
              [b'user-agent',
               b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:60.0) Gecko'
@@ -41,7 +41,7 @@ async def list_send(data):
 
 
 def test_basic_app():
-    app = CallFlow(__name__)
+    app = CallPy(__name__)
     async def hello(req):
         return 'ok'
 
@@ -65,7 +65,7 @@ def test_basic_app():
 
 @pytest.mark.asyncio
 async def test_more_app():
-    app = CallFlow()
+    app = CallPy()
 
     @app.before_request
     async def before_request1(req):
@@ -164,7 +164,7 @@ async def test_more_app():
 
 @pytest.mark.asyncio
 async def test_basic_blueprint():
-    app = CallFlow()
+    app = CallPy()
     bp = Blueprint('foo', url_prefix='/foo')
 
     @bp.before_request
@@ -210,7 +210,7 @@ async def test_basic_blueprint():
 
 @pytest.mark.asyncio
 async def test_blueprint_errorhandler():
-    app = CallFlow()
+    app = CallPy()
 
     bp = Blueprint('foo', url_prefix='/foo')
 
@@ -255,7 +255,7 @@ async def test_blueprint_errorhandler():
 
 @pytest.mark.asyncio
 async def test_blueprint():
-    app = CallFlow()
+    app = CallPy()
 
     bp = Blueprint('foo', url_prefix='/foo')
 
@@ -323,7 +323,7 @@ class FakeServer:
 
 @pytest.mark.asyncio
 async def test_hooks():
-    app = CallFlow()
+    app = CallPy()
 
     before_start_runned = False
     after_start_runned = False

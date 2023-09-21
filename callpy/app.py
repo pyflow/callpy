@@ -24,16 +24,16 @@ else:
     from .watcher import Watcher as Supervisor
 
 
-class CallFlow(object):
-    """The callflow object implements a ASGI application and acts as the central
+class CallPy(object):
+    """The callpy object implements a ASGI application and acts as the central
     object.  Once it is created it will act as a central registry for
     the view functions, the URL rules,  and more.
 
-    Usually you create a `CallFlow` instance in your main module or
+    Usually you create a `CallPy` instance in your main module or
     in the `__init__.py` file of your package like this:
 
-        from callpy import CallFlow
-        app = CallFlow()
+        from callpy import CallPy
+        app = CallPy()
 
     """
 
@@ -490,3 +490,6 @@ class CallFlow(object):
             self.__class__.__name__,
             self.name,
         )
+
+
+CallFlow = CallPy
