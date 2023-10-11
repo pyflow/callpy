@@ -474,6 +474,7 @@ class CallPy(object):
         scope['app'] = self
         req = Request(scope, receive)
         error = None
+        response = None
         try:
             try:
                 response = await self.full_dispatch_request(req)
