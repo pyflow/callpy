@@ -8,14 +8,14 @@ import typing
 import os
 import inspect
 
-from .utils import json, to_bytes, to_unicode
+from .utils import json, to_bytes, to_unicode, guess_file_mimetype
 from .datastructures import HeaderProperty, HeaderDict
 from .errors import HTTPError, default_errors
 from .request import parse_date, Request
 from .types import Receive, Scope, Send
 from http.cookies import SimpleCookie
 from urllib.parse import quote, quote_plus
-from mimetypes import guess_type
+
 from callpy.concurrency import iterate_in_threadpool, run_until_first_complete
 
 
@@ -459,8 +459,9 @@ class FileResponse(Response):
         self.filename = filename
         self.send_header_only = method is not None and method.upper() == "HEAD"
         more_headers = {}
+
         if 'content-type' not in headers:
-            content_type = guess_type(filename or path)[0] or "text/plain"
+            content_type = guess_file_mimetype(filename or path) or "text/plain"
             more_headers['content_type'] = content_type
 
         super().__init__(
