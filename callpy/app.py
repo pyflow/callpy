@@ -39,6 +39,7 @@ class CallPy(object):
 
     def __init__(self, name=''):
         self.config = {}
+        self.dispatch = {}
 
         self.name = name or 'main'
 
@@ -470,8 +471,24 @@ class CallPy(object):
         for func in funcs:
             rv = await func(request, response, exc)
 
+    def dispatch_app(self, path, app):
+        if isinstance(path, (str)):
+            key = path
+            self.dispatch[key] = app
+        elif isinstance(path, (list, tuple)):
+            for key in path:
+                self.dispatch[key] = app
+        else:
+            raise Exception(f'dispatch path must be str or list[str]')
+
     async def __call__(self, scope, receive, send):
         scope['app'] = self
+        path = scope['path']
+        if self.dispatch:
+            for dispatch_path, app in self.dispatch.items():
+                if dispatch_path == path or path.startswith(f'{dispatch_path}/'):
+                    await app(scope, receive, send)
+                    return
         req = Request(scope, receive)
         error = None
         response = None
