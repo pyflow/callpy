@@ -221,11 +221,11 @@ class CallPy(object):
             return f
         return decorator
 
-    def static(self, rule, directory, html=False):
+    def static(self, rule, directory, html=False, check=False):
         realrule1 = '{}/'.format(rule.rstrip('/'))
         realrule2 = '{}{}'.format(realrule1, '<path:target>')
 
-        h = StaticHandler(directory, html=html)
+        h = StaticHandler(directory, html=html, check_dir=check)
         endpoint = 'static_{}'.format(rule.strip('/').replace('/', '_'))
 
         self.add_url_rule(realrule1, endpoint, h, ['GET', 'PUT', 'POST', 'HEAD', 'DELETE'])
