@@ -86,7 +86,7 @@ class CallPy(object):
         self.router = Router()
 
 
-    def run(self, host=None, port=None, debug=True, **options):
+    def run(self, host=None, port=None, debug=False, **options):
         """Runs the application on a local development server.
         Args:
 
@@ -221,11 +221,11 @@ class CallPy(object):
             return f
         return decorator
 
-    def static(self, rule, directory):
+    def static(self, rule, directory, html=False):
         realrule1 = '{}/'.format(rule.rstrip('/'))
         realrule2 = '{}{}'.format(realrule1, '<path:target>')
 
-        h = StaticHandler(directory)
+        h = StaticHandler(directory, html=html)
         endpoint = 'static_{}'.format(rule.strip('/').replace('/', '_'))
 
         self.add_url_rule(realrule1, endpoint, h, ['GET', 'PUT', 'POST', 'HEAD', 'DELETE'])

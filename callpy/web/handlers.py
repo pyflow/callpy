@@ -15,6 +15,7 @@ from .response import (
     redirect
 )
 from .types import Receive, Scope, Send
+from string import Formatter
 
 
 class NotModifiedResponse(Response):
@@ -37,6 +38,12 @@ class NotModifiedResponse(Response):
             },
         )
 
+def is_formattable(format_string):
+    keys = [tup[1] for tup in Formatter().parse(format_string) if tup[1] is not None]
+    if len(keys) > 0:
+        return True
+    return False
+
 class StaticHandler:
     def __init__(
         self,
@@ -44,13 +51,19 @@ class StaticHandler:
         html: bool = False,
         check_dir: bool = True,
     ) -> None:
-        self.directory = os.path.abspath(directory)
+        if is_formattable(directory):
+            self.directory_format = directory
+            self.directory = None
+        else:
+            self.directory_format = None
+            self.directory = os.path.abspath(directory)
+            if check_dir and directory is not None and not os.path.isdir(directory):
+                raise RuntimeError(f"Directory '{directory}' does not exist")
         self.html = html
         self.config_checked = False
-        if check_dir and directory is not None and not os.path.isdir(directory):
-            raise RuntimeError(f"Directory '{directory}' does not exist")
 
-    async def __call__(self, request, target='/'):
+    async def __call__(self, request, target='', **kwargs):
+        print('_call__', target)
 
         if not self.config_checked:
             await self.check_config()
@@ -73,7 +86,15 @@ class StaticHandler:
             # the static files directory.
             return text("Not Found", status=404)
 
-        full_path, stat_result = await self.lookup_path(path)
+        if self.directory:
+            full_path = os.path.join(self.directory, path)
+        elif self.directory_format:
+            directory = self.directory_format.format(**request.view_args)
+            full_path = os.path.join(os.path.abspath(directory), path)
+        else:
+            full_path = path
+
+        stat_result = await self.lookup_path(full_path)
 
         if stat_result and stat.S_ISREG(stat_result.st_mode):
             # We have a static file to serve.
@@ -82,21 +103,22 @@ class StaticHandler:
         elif stat_result and stat.S_ISDIR(stat_result.st_mode) and self.html:
             # We're in HTML mode, and have got a directory URL.
             # Check if we have 'index.html' file to serve.
-            index_path = os.path.join(path, "index.html")
-            full_path, stat_result = await self.lookup_path(index_path)
+            index_path = os.path.join(full_path, "index.html")
+            stat_result = await self.lookup_path(index_path)
             if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
                 if not request.full_path.endswith("/"):
                     # Directory URLs should redirect to always end in "/".
                     new_url = '{}/'.format(request.base_url)
-                    return redirect(url=new_url)
-                return self.file_response(full_path, stat_result, request)
+                    return redirect(new_url)
+                return self.file_response(index_path, stat_result, request)
 
         if self.html:
             # Check for '404.html' if we're in HTML mode.
-            full_path, stat_result = await self.lookup_path("404.html")
+            file_path = os.path.join(full_path, "404.html")
+            stat_result = await self.lookup_path(file_path)
             if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
                 return self.file_response(
-                    full_path, stat_result, request, status_code=404
+                    file_path, stat_result, request, status_code=404
                 )
 
         return text("Not Found", status=404)
@@ -104,13 +126,12 @@ class StaticHandler:
     async def lookup_path(
         self, path: str
     ) -> typing.Tuple[str, typing.Optional[os.stat_result]]:
-        full_path = os.path.join(self.directory, path)
         try:
-            stat_result = await aio_stat(full_path)
-            return (full_path, stat_result)
+            stat_result = await aio_stat(path)
+            return stat_result
         except FileNotFoundError:
             pass
-        return ("", None)
+        return None
 
     def file_response(
         self,
