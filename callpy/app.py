@@ -508,6 +508,3 @@ class CallPy(object):
             self.__class__.__name__,
             self.name,
         )
-
-
-CallFlow = CallPy
