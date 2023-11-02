@@ -481,6 +481,15 @@ class CallPy(object):
         else:
             raise Exception(f'dispatch path must be str or list[str]')
 
+        _startup = getattr(app, '_startup')
+        _shutdown = getattr(app, '_shutdown')
+        if isinstance(_startup, (list, tuple)):
+            for hook in _startup:
+                self.before_start(hook)
+        if isinstance(_shutdown, (list, tuple)):
+            for hook in _shutdown:
+                self.after_stop(hook)
+
     async def __call__(self, scope, receive, send):
         scope['app'] = self
         path = scope['path']
